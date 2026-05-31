@@ -1,3 +1,10 @@
 from django.contrib import admin
 
-# Register your models here.
+from .models import Headquarters
+
+
+@admin.register(Headquarters)
+class HeadquartersAdmin(admin.ModelAdmin):
+    list_display = ("name", "phone", "active")
+    list_filter = ("active",)
+    search_fields = ("name", "address", "phone")

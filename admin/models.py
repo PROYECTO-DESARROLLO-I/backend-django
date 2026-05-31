@@ -1,9 +1,9 @@
-from django.db import models
+"""Compatibility module for the old local admin app.
 
-# Create your models here.
+The domain model for administrative staff now lives in the `administrative` app
+so it does not collide conceptually with `django.contrib.admin`.
+"""
 
+from administrative.models import Administrative as Admin
 
-class Admin(models.Model):
-    user_id = models.ForeignKey("user.User", on_delete=models.CASCADE)
-    headquarters_id = models.ForeignKey(Headquarters, on_delete=models.CASCADE)
-    # TODO: roles?
+__all__ = ["Admin"]

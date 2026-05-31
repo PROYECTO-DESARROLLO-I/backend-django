@@ -1,3 +1,1 @@
-from django.contrib import admin
-
-# Register your models here.
+# The administrative staff model is registered from administrative/admin.py.

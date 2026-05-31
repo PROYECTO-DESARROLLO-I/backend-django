@@ -1,3 +1,10 @@
 from django.contrib import admin
 
-# Register your models here.
+from .models import EPS
+
+
+@admin.register(EPS)
+class EPSAdmin(admin.ModelAdmin):
+    list_display = ("name", "code", "active")
+    list_filter = ("active",)
+    search_fields = ("name", "code")
