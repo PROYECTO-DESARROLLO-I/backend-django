@@ -1,0 +1,7 @@
+SECRET_KEY=Ur2UBGVifeW21QvX5qlCg4704BGDmcFOZl7AM90mz0y
+
+DB_USER=postgres
+DB_PASSWORD=desarrollo123$
+DB_HOST=db.cqxykizhvwhqwwgoqade.supabase.co
+DB_PORT=5432
+DB_NAME=postgres

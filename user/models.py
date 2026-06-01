@@ -1,5 +1,9 @@
+from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -49,6 +53,15 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     rol = models.CharField(max_length=20, choices=Role.choices)
     is_active = models.BooleanField(default=True, db_column="activo")
+    failed_login_attempts = models.PositiveSmallIntegerField(
+        default=0,
+        db_column="intentos_fallidos_login",
+    )
+    locked_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_column="bloqueado_hasta",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -63,3 +76,39 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.nombre} {self.apellido} <{self.email}>"
+
+    def is_temporarily_locked(self, now=None):
+        now = now or timezone.now()
+        return self.locked_until is not None and self.locked_until > now
+
+    def login_lock_expired(self, now=None):
+        now = now or timezone.now()
+        return self.locked_until is not None and self.locked_until <= now
+
+    def register_failed_login(self, now=None):
+        now = now or timezone.now()
+        max_attempts = getattr(settings, "AUTH_MAX_FAILED_LOGIN_ATTEMPTS", 5)
+        lockout_minutes = getattr(settings, "AUTH_LOGIN_LOCKOUT_MINUTES", 15)
+
+        self.failed_login_attempts += 1
+        if self.failed_login_attempts >= max_attempts:
+            self.locked_until = now + timedelta(minutes=lockout_minutes)
+
+        self.save(
+            update_fields=[
+                "failed_login_attempts",
+                "locked_until",
+                "updated_at",
+            ]
+        )
+
+    def reset_failed_login_attempts(self):
+        self.failed_login_attempts = 0
+        self.locked_until = None
+        self.save(
+            update_fields=[
+                "failed_login_attempts",
+                "locked_until",
+                "updated_at",
+            ]
+        )
