@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
@@ -21,8 +20,6 @@ class UserResponseSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["id", "email", "nombre", "apellido", "rol"]
-=======
-from rest_framework import serializers
 
 
 class LoginSerializer(serializers.Serializer):
@@ -47,4 +44,3 @@ class LogoutSerializer(serializers.Serializer):
         trim_whitespace=False,
         write_only=True,
     )
->>>>>>> feature/login
