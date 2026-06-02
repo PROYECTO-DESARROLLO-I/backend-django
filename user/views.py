@@ -17,6 +17,7 @@ from user.authentication import (
     get_refresh_token_lifetime_seconds,
 )
 from user.serializers import LoginSerializer, LogoutSerializer
+from user.serializers import PatientRegisterSerializer
 
 INVALID_CREDENTIALS_MESSAGE = "Credenciales inválidas"
 INACTIVE_ACCOUNT_MESSAGE = "No fue posible iniciar sesión"
@@ -143,3 +144,29 @@ class MeView(APIView):
             build_authenticated_user_payload(request.user),
             status=status.HTTP_200_OK,
         )
+    
+class PatientRegisterView(APIView):
+    """
+    POST /api/auth/register/
+    Registro público de nuevos pacientes.
+    No requiere autenticación.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PatientRegisterSerializer(data=request.data)
+
+        if serializer.is_valid(): #Si los datos son validos, guarda el nuevo paciente y user en la BDD
+            serializer.save()
+            return Response(
+                {"detail": "Registro exitoso. Ya puedes iniciar sesión."},
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response( #Si los datos no son validos, devuelve error
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+
+
