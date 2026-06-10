@@ -16,7 +16,12 @@ from user.authentication import (
     get_access_token_lifetime_seconds,
     get_refresh_token_lifetime_seconds,
 )
-from user.serializers import LoginSerializer, LogoutSerializer
+from user.permissions import IsAdministrativeUser
+from user.serializers import (
+    InternalStaffRegisterSerializer,
+    LoginSerializer,
+    LogoutSerializer,
+)
 from user.serializers import PatientRegisterSerializer
 
 INVALID_CREDENTIALS_MESSAGE = "Credenciales inválidas"
@@ -167,6 +172,26 @@ class PatientRegisterView(APIView):
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
         )
-    
 
+
+class InternalStaffRegisterView(APIView):
+    """
+    POST /api/auth/staff/register/
+    Registro de nuevas cuentas internas para médicos y administrativos.
+    Requiere autenticación con rol Administrativo.
+    """
+
+    permission_classes = [IsAdministrativeUser]
+
+    def post(self, request):
+        serializer = InternalStaffRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        return Response(
+            {
+                "detail": "Cuenta interna creada exitosamente.",
+                "user": serializer.to_representation(user),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
