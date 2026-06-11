@@ -21,44 +21,20 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
-    document_type = serializers.CharField(required=False, allow_blank=True)
-
+    
     class Meta:
         model = Patient
         fields = [
             "user",
-            "identity_document",
             "document_type",
+            "identity_document",
             "date_birth",
             "phone_number",
             "address",
             "eps",
         ]
 
-    def validate_document_type(self, value: str) -> str:
-        if value is None:
-            return value
-
-        normalized = value.strip()
-        if normalized == "":
-            return ""
-
-        mapping = {
-            "cc": Patient.DocumentType.CC,
-            "ti": Patient.DocumentType.TI,
-            "ce": Patient.DocumentType.CE,
-            "pasaporte": Patient.DocumentType.PAS,
-            "pas": Patient.DocumentType.PAS,
-        }
-        lowered = normalized.lower()
-        if lowered in mapping:
-            return mapping[lowered]
-
-        valid = ", ".join([c[0] for c in Patient.DocumentType.choices])
-        raise serializers.ValidationError(
-            f"Tipo de documento inválido. Usa uno de: {valid}."
-        )
-
+    
     def validate_date_birth(self, value: date | None) -> date | None:
         if value is None:
             return value
