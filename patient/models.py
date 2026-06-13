@@ -30,9 +30,8 @@ class Patient(models.Model):
     address = models.CharField(max_length=255, blank=True, db_column="direccion")
     eps = models.ForeignKey(
         "eps.EPS",
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
-        blank=True,
         related_name="patients",
         db_column="eps_id",
     )

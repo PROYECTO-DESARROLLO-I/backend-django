@@ -18,8 +18,8 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
     user = UserSignupSerializer()
     eps = serializers.PrimaryKeyRelatedField(
         queryset=EPS.objects.filter(active=True),
-        required=False,
-        allow_null=True,
+        required=True,
+        allow_null=False,
     )
     
     class Meta:
@@ -65,5 +65,8 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
             "date_birth": instance.date_birth,
             "phone_number": instance.phone_number,
             "address": instance.address,
-            "eps": instance.eps_id,
+            "eps": {
+                "id": instance.eps_id,
+                "name": instance.eps.get_name_display() if instance.eps else None,
+            },
         }
