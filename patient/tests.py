@@ -57,6 +57,9 @@ class PatientModelTests(TestCase):
             user=self.user,
             identity_document="12345678",
             document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 5, 15),
+            phone_number="3015551234",
+            address="Calle 1 #2-3",
             eps=self.eps,
         )
 
@@ -69,6 +72,9 @@ class PatientModelTests(TestCase):
             user=self.user,
             identity_document="12345678",
             document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 5, 15),
+            phone_number="3015551234",
+            address="Calle 1 #2-3",
             eps=self.eps,
         )
 
@@ -81,6 +87,9 @@ class PatientModelTests(TestCase):
             user=self.user,
             identity_document="12345678",
             document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 5, 15),
+            phone_number="3015551234",
+            address="Calle 1 #2-3",
             eps=self.eps,
         )
 
@@ -98,23 +107,11 @@ class PatientModelTests(TestCase):
                 user=user2,
                 identity_document="12345678",  # Mismo documento
                 document_type=Patient.DocumentType.CC,
+                date_birth=date(1992, 10, 20),
+                phone_number="3015555678",
+                address="Carrera 10 #20-30",
                 eps=self.eps,
             )
-
-    def test_patient_optional_fields(self):
-        """Test: Campos opcionales no obligatorios"""
-        patient = Patient.objects.create(
-            user=self.user,
-            identity_document="12345678",
-            # document_type, date_birth, phone_number, address son opcionales
-            eps=self.eps,
-        )
-
-        self.assertIsNotNone(patient)
-        self.assertEqual(patient.document_type, "")
-        self.assertIsNone(patient.date_birth)
-        self.assertEqual(patient.phone_number, "")
-        self.assertEqual(patient.address, "")
 
 
 class PatientRegistrationSerializerTests(TestCase):
@@ -139,14 +136,14 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "87654321",
             "document_type": Patient.DocumentType.CC,
-            "date_birth": date(1985, 3, 20),
+            "date_birth": "1985-03-20",
             "phone_number": "3105559876",
             "address": "Carrera 5 #10-15",
             "eps": self.eps.id,
         }
 
         serializer = PatientRegistrationSerializer(data=data)
-        self.assertTrue(serializer.is_valid())
+        self.assertTrue(serializer.is_valid(), serializer.errors)
 
         patient = serializer.save()
 
@@ -178,7 +175,7 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "11111111",
             "document_type": Patient.DocumentType.CC,
-            "date_birth": tomorrow,  # Fecha futura
+            "date_birth": tomorrow.isoformat(),  # Fecha futura en formato str
             "phone_number": "3105551111",
             "address": "Calle 1 #1-1",
             "eps": self.eps.id,
@@ -202,14 +199,14 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "22222222",
             "document_type": Patient.DocumentType.CC,
-            "date_birth": today,  # Hoy es válido
+            "date_birth": today.isoformat(),  # Hoy es válido
             "phone_number": "3105552222",
             "address": "Calle 2 #2-2",
             "eps": self.eps.id,
         }
 
         serializer = PatientRegistrationSerializer(data=data)
-        self.assertTrue(serializer.is_valid())
+        self.assertTrue(serializer.is_valid(), serializer.errors)
         
         patient = serializer.save()
         self.assertEqual(patient.date_birth, today)
@@ -225,7 +222,7 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "33333333",
             "document_type": Patient.DocumentType.CC,
-            "date_birth": date(1990, 1, 1),
+            "date_birth": "1990-01-01",
             "phone_number": "3105553333",
             "address": "Calle 3 #3-3",
             "eps": 99999,  # ID inexistente
@@ -252,7 +249,7 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "44444444",
             "document_type": Patient.DocumentType.CC,
-            "date_birth": date(1992, 6, 10),
+            "date_birth": "1992-06-10",
             "phone_number": "3105554444",
             "address": "Calle 4 #4-4",
             "eps": inactive_eps.id,
@@ -272,12 +269,14 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "55555555",
             "document_type": Patient.DocumentType.CC,
+            "date_birth": "1994-12-05",
+            "phone_number": "3105555555",
+            "address": "Calle 5 #5-5",
             "eps": self.eps.id,
         }
 
         serializer = PatientRegistrationSerializer(data=data)
         self.assertFalse(serializer.is_valid())
-        # Debe haber errores en el usuario anidado
         self.assertIn("user", serializer.errors)
 
     def test_missing_required_eps(self):
@@ -291,6 +290,9 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "66666666",
             "document_type": Patient.DocumentType.CC,
+            "date_birth": "1988-07-14",
+            "phone_number": "3105556666",
+            "address": "Calle 6 #6-6",
             # Falta 'eps'
         }
 
@@ -309,6 +311,9 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             # Falta 'identity_document'
             "document_type": Patient.DocumentType.CC,
+            "date_birth": "1991-11-23",
+            "phone_number": "3105557777",
+            "address": "Calle 7 #7-7",
             "eps": self.eps.id,
         }
 
@@ -339,12 +344,14 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "77777777",
             "document_type": Patient.DocumentType.CC,
+            "date_birth": "1993-01-15",
+            "phone_number": "3105558888",
+            "address": "Calle 8 #8-8",
             "eps": self.eps.id,
         }
 
         serializer = PatientRegistrationSerializer(data=data)
-        # is_valid() retorna True porque el serializer no valida unicidad de email
-        self.assertTrue(serializer.is_valid())
+        self.assertTrue(serializer.is_valid(), serializer.errors)
         
         # El error ocurre durante save() por constraint de BD
         with self.assertRaises(IntegrityError):
@@ -363,6 +370,10 @@ class PatientRegistrationSerializerTests(TestCase):
         Patient.objects.create(
             user=user1,
             identity_document="88888888",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="3105550011",
+            address="Carrera 1 #1-1",
             eps=self.eps,
         )
 
@@ -376,6 +387,9 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "88888888",  # Documento duplicado
             "document_type": Patient.DocumentType.CC,
+            "date_birth": "1992-04-22",
+            "phone_number": "3105552233",
+            "address": "Carrera 2 #2-2",
             "eps": self.eps.id,
         }
 
@@ -426,10 +440,6 @@ class PatientRegistrationSerializerTests(TestCase):
 
     def test_atomic_transaction_on_save(self):
         """Test: Transacción atómica al guardar"""
-        # Si ocurre un error después de crear el usuario,
-        # el usuario no debe quedar en la BD
-
-        # Primero crear una EPS activa
         eps_activa = EPS.objects.create(
             name="FAMISANAR",
             code="FAM001",
@@ -445,12 +455,15 @@ class PatientRegistrationSerializerTests(TestCase):
             },
             "identity_document": "11223344",
             "document_type": Patient.DocumentType.CC,
+            "date_birth": "1994-05-12",
+            "phone_number": "3125556677",
+            "address": "Calle Principal #10",
             "eps": eps_activa.id,
         }
 
         # La transacción debe completar exitosamente
         serializer = PatientRegistrationSerializer(data=data_valido)
-        self.assertTrue(serializer.is_valid())
+        self.assertTrue(serializer.is_valid(), serializer.errors)
 
         patient = serializer.save()
         self.assertIsNotNone(patient)
@@ -482,12 +495,15 @@ class PatientRegistrationSerializerTests(TestCase):
                 },
                 "identity_document": f"5555555{idx}",
                 "document_type": doc_type,
+                "date_birth": "1990-01-01",
+                "phone_number": f"300555000{idx}",
+                "address": f"Calle {idx} #12-34",
                 "eps": self.eps.id,
             }
 
             serializer = PatientRegistrationSerializer(data=data)
             self.assertTrue(serializer.is_valid(), 
-                          f"Validación falló para tipo: {doc_type}")
+                          f"Validación falló para tipo: {doc_type} - Errores: {serializer.errors}")
 
             patient = serializer.save()
             self.assertEqual(patient.document_type, doc_type)
