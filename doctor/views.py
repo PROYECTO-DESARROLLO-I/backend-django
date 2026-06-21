@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -7,11 +8,16 @@ from rest_framework.views import APIView
 
 from availability.models import DoctorAvailability, ScheduleException
 from doctor.models import Doctor
-from doctor.serializers import DoctorListSerializer
+from doctor.serializers import DoctorCreateSerializer, DoctorDetailSerializer, DoctorListSerializer
+from notifications.services import send_doctor_welcome
+from user.permissions import IsAdministrative
 
 
-class DoctorListView(APIView):
-    permission_classes = [IsAuthenticated]
+class DoctorView(APIView):
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsAdministrative()]
+        return [IsAuthenticated()]
 
     def get(self, request):
         specialty_id = request.query_params.get("specialty")
@@ -39,8 +45,16 @@ class DoctorListView(APIView):
                 doctor.next_available_date = next_date
                 result.append(doctor)
 
-        serializer = DoctorListSerializer(result, many=True)
-        return Response(serializer.data)
+        return Response(DoctorListSerializer(result, many=True).data)
+
+    def post(self, request):
+        serializer = DoctorCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        doctor = serializer.save()
+
+        send_doctor_welcome(doctor)
+
+        return Response(DoctorDetailSerializer(doctor).data, status=status.HTTP_201_CREATED)
 
     def _next_available_date(self, doctor, specialty_id, today, horizon):
         availabilities = DoctorAvailability.objects.filter(

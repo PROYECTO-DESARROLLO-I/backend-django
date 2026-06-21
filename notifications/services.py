@@ -5,6 +5,34 @@ from django.utils import timezone
 from notifications.models import Notification
 
 
+def send_doctor_welcome(doctor):
+    user = doctor.user
+    specialties = ", ".join(s.name for s in doctor.specialties.all())
+
+    subject = "Bienvenido a Salud AgendaX"
+    message = (
+        f"Hola Dr(a). {user.nombre} {user.apellido},\n\n"
+        f"Tu cuenta ha sido creada exitosamente en Salud AgendaX.\n\n"
+        f"  Correo          : {user.email}\n"
+        f"  Registro médico : {doctor.register_number}\n"
+        f"  Especialidad(es): {specialties}\n\n"
+        f"Ya puedes iniciar sesión con tu correo y la contraseña asignada.\n\n"
+        f"Salud AgendaX"
+    )
+
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+    except Exception:
+        # El registro no falla si el correo no se puede enviar (SMTP no configurado aún)
+        pass
+
+
 def send_appointment_confirmation(appointment):
     patient_user = appointment.patient.user
     doctor = appointment.doctor
