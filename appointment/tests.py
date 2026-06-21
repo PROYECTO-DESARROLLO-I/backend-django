@@ -330,6 +330,43 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_increments_eps_used_budget_after_booking(self, mock_email):
+        budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=10,
+            used_budget=0,
+        )
+
+        self.client.post(self.url, self.booking_payload(), format="json")
+
+        budget.refresh_from_db()
+        self.assertEqual(budget.used_budget, 1)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_eps_budget_blocks_booking_after_limit_is_reached(self, mock_email):
+        """Second booking is rejected once used_budget reaches total_budget."""
+        second_date = self.test_date + timedelta(days=1)
+        EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=second_date,  # covers both booking dates
+            total_budget=1,
+            used_budget=0,
+        )
+        first_slot = make_aware(self.test_date, time(9, 0))
+        second_slot = make_aware(second_date, time(9, 0))
+
+        self.client.post(self.url, self.booking_payload(scheduled_at=first_slot.isoformat()), format="json")
+        response = self.client.post(self.url, self.booking_payload(scheduled_at=second_slot.isoformat()), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("presupuestal", str(response.data))
+
 
 class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
     def setUp(self):
