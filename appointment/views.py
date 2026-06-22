@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from django.db.models import Q
+from django.db.models import F, Q
 
 from appointment.models import Appointment
 from appointment.serializers import (
@@ -60,7 +60,8 @@ class AppointmentCreateView(APIView):
             self._check_patient_no_overlap(patient, scheduled_at, slot_end)
             self._check_frequency_restriction(patient, specialty, scheduled_at)
             self._check_eps_limit(patient, specialty, scheduled_at)
-            self._check_eps_budget(patient, specialty, scheduled_at)
+            # Returns the locked budget row (or None) so we can discount after booking.
+            budget = self._check_eps_budget(patient, specialty, scheduled_at)
 
             appointment = Appointment.objects.create(
                 patient=patient,
@@ -73,6 +74,9 @@ class AppointmentCreateView(APIView):
                 created_by=request.user,
                 consultation_reason=data.get("consultation_reason", ""),
             )
+
+            if budget is not None:
+                EPSBudget.objects.filter(pk=budget.pk).update(used_budget=F("used_budget") + 1)
 
         send_appointment_confirmation(appointment)
 
@@ -187,11 +191,14 @@ class AppointmentCreateView(APIView):
                 )
 
     def _check_eps_budget(self, patient, specialty, scheduled_at):
+        """Returns the matching EPSBudget row (locked) so the caller can discount it, or None."""
         if not patient.eps:
-            return
+            return None
         appt_date = scheduled_at.date()
+        # select_for_update prevents two concurrent bookings from both passing the budget check
         budget = (
-            EPSBudget.objects.filter(
+            EPSBudget.objects.select_for_update()
+            .filter(
                 Q(specialty=specialty) | Q(specialty__isnull=True),
                 eps=patient.eps,
                 period_start__lte=appt_date,
@@ -203,6 +210,7 @@ class AppointmentCreateView(APIView):
             raise ValidationError(
                 {"detail": "Tu EPS no tiene disponibilidad presupuestal para agendar esta cita."}
             )
+        return budget
 
 
 class AppointmentListView(APIView):
