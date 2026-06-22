@@ -20,19 +20,16 @@ class Patient(models.Model):
         db_column="documento_identidad",
     )
     document_type = models.CharField(
-        max_length=3,
+        max_length=5,
         choices=DocumentType.choices,
-        blank=True,
         db_column="tipo_documento",
     )
-    date_birth = models.DateField(null=True, blank=True, db_column="fecha_nacimiento")
-    phone_number = models.CharField(max_length=30, blank=True, db_column="telefono")
-    address = models.CharField(max_length=255, blank=True, db_column="direccion")
+    date_birth = models.DateField(db_column="fecha_nacimiento")
+    phone_number = models.CharField(max_length=30, db_column="telefono")
+    address = models.CharField(max_length=255, db_column="direccion")
     eps = models.ForeignKey(
         "eps.EPS",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
         related_name="patients",
         db_column="eps_id",
     )

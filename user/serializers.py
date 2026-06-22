@@ -1,3 +1,5 @@
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
@@ -5,6 +7,25 @@ from django.db import transaction
 from user.models import User
 from patient.models import Patient
 from eps.models import EPS
+
+User = get_user_model()
+
+
+class UserSignupSerializer(serializers.Serializer):
+    nombre = serializers.CharField(max_length=150)
+    apellido = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate_password(self, value: str) -> str:
+        validate_password(value)
+        return value
+
+
+class UserResponseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "email", "nombre", "apellido", "rol"]
 
 
 class LoginSerializer(serializers.Serializer):
