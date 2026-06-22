@@ -3,10 +3,6 @@ from .base import *
 
 DEBUG = True 
 
-INSTALLED_APPS += [
-    "corsheaders",
-]
-
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     *MIDDLEWARE,
