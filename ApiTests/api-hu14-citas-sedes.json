@@ -1,0 +1,417 @@
+{
+  "info": {
+    "_postman_id": "hu14-citas-sedes-collection",
+    "name": "HU14 - Citas por Sedes",
+    "description": "Endpoints para agendamiento de citas filtrado por sede (HU14).\n\n**Flujo recomendado:**\n1. Login → obtener token\n2. Listar especialidades\n3. Listar sedes con disponibilidad para la especialidad elegida\n4. Consultar franjas horarias por sede + especialidad\n5. Agendar cita\n\n**Variable de colección requerida:** `base_url` = `http://127.0.0.1:8000`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string",
+      "description": "JWT access token — se llena automáticamente al ejecutar Login"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.access) {",
+                  "    pm.collectionVariables.set('token', json.access);",
+                  "    pm.test('Token guardado', () => pm.expect(json.access).to.be.a('string'));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"paciente@ejemplo.com\",\n  \"password\": \"ClaveSegura123*\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login", ""]
+            },
+            "description": "Obtiene el JWT. El token se guarda en la variable `token` automáticamente."
+          },
+          "response": [
+            {
+              "name": "Login exitoso",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"paciente@ejemplo.com\",\n  \"password\": \"ClaveSegura123*\"\n}"
+                },
+                "url": { "raw": "{{base_url}}/api/auth/login/" }
+              },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"access\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n  \"refresh\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Especialidades",
+      "item": [
+        {
+          "name": "Listar especialidades con disponibilidad",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json();",
+                  "pm.test('Es un array', () => pm.expect(data).to.be.an('array'));",
+                  "if (data.length > 0) {",
+                  "    pm.test('Contiene id y name', () => {",
+                  "        pm.expect(data[0]).to.have.property('id');",
+                  "        pm.expect(data[0]).to.have.property('name');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/specialties/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "specialties", ""]
+            },
+            "description": "Lista las especialidades activas que tienen al menos un médico con disponibilidad en los próximos 30 días."
+          },
+          "response": [
+            {
+              "name": "Especialidades disponibles",
+              "originalRequest": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+                "url": { "raw": "{{base_url}}/api/specialties/" }
+              },
+              "status": "OK",
+              "code": 200,
+              "body": "[\n  {\n    \"id\": 1,\n    \"name\": \"Medicina General\",\n    \"available_doctors_count\": 3\n  },\n  {\n    \"id\": 2,\n    \"name\": \"Cardiología\",\n    \"available_doctors_count\": 1\n  }\n]"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sedes (HU14)",
+      "item": [
+        {
+          "name": "Listar sedes con cupos por especialidad",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json();",
+                  "pm.test('Es un array', () => pm.expect(data).to.be.an('array'));",
+                  "if (data.length > 0) {",
+                  "    pm.test('Sede contiene id, name y address', () => {",
+                  "        pm.expect(data[0]).to.have.property('id');",
+                  "        pm.expect(data[0]).to.have.property('name');",
+                  "        pm.expect(data[0]).to.have.property('address');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/headquarters/?specialty=1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "headquarters", ""],
+              "query": [
+                {
+                  "key": "specialty",
+                  "value": "1",
+                  "description": "ID de la especialidad seleccionada"
+                }
+              ]
+            },
+            "description": "Devuelve únicamente las sedes que tienen al menos un médico de la especialidad indicada con franjas horarias libres en los próximos 30 días.\n\n**Parámetros requeridos:**\n- `specialty` — ID de la especialidad\n\n**Criterio HU14:** solo aparecen sedes con cupos reales disponibles."
+          },
+          "response": [
+            {
+              "name": "Sedes con disponibilidad",
+              "originalRequest": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+                "url": { "raw": "{{base_url}}/api/headquarters/?specialty=1" }
+              },
+              "status": "OK",
+              "code": 200,
+              "body": "[\n  {\n    \"id\": 1,\n    \"name\": \"Sede Norte\",\n    \"address\": \"Calle 100 # 15-20\",\n    \"phone\": \"+576012345678\"\n  },\n  {\n    \"id\": 2,\n    \"name\": \"Sede Sur\",\n    \"address\": \"Carrera 7 # 5-10\",\n    \"phone\": \"+576012345679\"\n  }\n]"
+            },
+            {
+              "name": "Sin parámetro specialty",
+              "originalRequest": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+                "url": { "raw": "{{base_url}}/api/headquarters/" }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"specialty\": \"Este parámetro es requerido.\"\n}"
+            },
+            {
+              "name": "Sin autenticación",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/headquarters/?specialty=1" }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "body": "{\n  \"detail\": \"Authentication credentials were not provided.\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Disponibilidad (Slots)",
+      "item": [
+        {
+          "name": "Slots por sede + especialidad (HU14)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json();",
+                  "pm.test('Tiene campo slots', () => pm.expect(data).to.have.property('slots'));",
+                  "pm.test('Tiene specialty_id y headquarters_id', () => {",
+                  "    pm.expect(data).to.have.property('specialty_id');",
+                  "    pm.expect(data).to.have.property('headquarters_id');",
+                  "});",
+                  "if (data.slots.length > 0) {",
+                  "    const slot = data.slots[0];",
+                  "    pm.test('Slot contiene dirección de sede', () => pm.expect(slot).to.have.property('headquarters_address'));",
+                  "    pm.test('Slot contiene consultorio', () => pm.expect(slot).to.have.property('consulting_room'));",
+                  "    pm.test('Slot contiene doctor_id', () => pm.expect(slot).to.have.property('doctor_id'));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/availability/slots/?specialty=1&headquarters=1&date_from=2026-07-01&date_to=2026-07-07",
+              "host": ["{{base_url}}"],
+              "path": ["api", "availability", "slots", ""],
+              "query": [
+                { "key": "specialty", "value": "1", "description": "ID de la especialidad (requerido)" },
+                { "key": "headquarters", "value": "1", "description": "ID de la sede (requerido para modo HU14)" },
+                { "key": "date_from", "value": "2026-07-01", "description": "Fecha de inicio del rango (YYYY-MM-DD, opcional — por defecto hoy)" },
+                { "key": "date_to", "value": "2026-07-07", "description": "Fecha de fin del rango (YYYY-MM-DD, opcional — por defecto +30 días)" }
+              ]
+            },
+            "description": "Devuelve todas las franjas horarias libres en la sede indicada para la especialidad dada, agregando médicos de todos los doctores que atienden ahí.\n\n**Parámetros requeridos:** `specialty`, `headquarters`\n**Parámetros opcionales:** `date_from`, `date_to`\n\nCada slot incluye:\n- `headquarters_address` — dirección física de la sede\n- `consulting_room` — consultorio asignado al médico en esa franja\n- `doctor_id` / `doctor_name` — médico que atenderá\n\n**Criterio HU14:** validación cruzada garantizada — los slots sólo se generan desde `DoctorAvailability` vinculado a esa sede."
+          },
+          "response": [
+            {
+              "name": "Slots disponibles en sede",
+              "originalRequest": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+                "url": { "raw": "{{base_url}}/api/availability/slots/?specialty=1&headquarters=1&date_from=2026-07-01&date_to=2026-07-03" }
+              },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"specialty_id\": 1,\n  \"headquarters_id\": 1,\n  \"start_date\": \"2026-07-01\",\n  \"end_date\": \"2026-07-03\",\n  \"slots\": [\n    {\n      \"date\": \"2026-07-01\",\n      \"start_time\": \"08:00:00\",\n      \"end_time\": \"08:30:00\",\n      \"duration_minutes\": 30,\n      \"doctor_id\": 3,\n      \"doctor_name\": \"Dr(a). Carlos Perez\",\n      \"headquarters_id\": 1,\n      \"headquarters_name\": \"Sede Norte\",\n      \"headquarters_address\": \"Calle 100 # 15-20\",\n      \"consulting_room\": \"Consultorio 3\"\n    },\n    {\n      \"date\": \"2026-07-01\",\n      \"start_time\": \"08:30:00\",\n      \"end_time\": \"09:00:00\",\n      \"duration_minutes\": 30,\n      \"doctor_id\": 3,\n      \"doctor_name\": \"Dr(a). Carlos Perez\",\n      \"headquarters_id\": 1,\n      \"headquarters_name\": \"Sede Norte\",\n      \"headquarters_address\": \"Calle 100 # 15-20\",\n      \"consulting_room\": \"Consultorio 3\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "date_to anterior a date_from",
+              "originalRequest": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+                "url": { "raw": "{{base_url}}/api/availability/slots/?specialty=1&headquarters=1&date_from=2026-07-10&date_to=2026-07-01" }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"date_to\": \"La fecha de fin debe ser mayor o igual a la de inicio.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Slots por médico + especialidad (modo original)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json();",
+                  "pm.test('Tiene view, start_date, end_date y slots', () => {",
+                  "    pm.expect(data).to.have.property('view');",
+                  "    pm.expect(data).to.have.property('start_date');",
+                  "    pm.expect(data).to.have.property('end_date');",
+                  "    pm.expect(data).to.have.property('slots');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/availability/slots/?doctor=1&specialty=1&date=2026-07-01&view=week",
+              "host": ["{{base_url}}"],
+              "path": ["api", "availability", "slots", ""],
+              "query": [
+                { "key": "doctor", "value": "1", "description": "ID del médico" },
+                { "key": "specialty", "value": "1", "description": "ID de la especialidad" },
+                { "key": "date", "value": "2026-07-01", "description": "Fecha de inicio (YYYY-MM-DD)" },
+                { "key": "view", "value": "week", "description": "Ventana de tiempo: week (7 días) o month (30 días)" }
+              ]
+            },
+            "description": "Modo original: franjas libres para un médico + especialidad específicos.\n\n**Parámetros requeridos:** `doctor`, `specialty`\n**Parámetros opcionales:** `date` (por defecto hoy), `view` (`week` o `month`)\n\nCada slot ahora también incluye `doctor_id`, `doctor_name`, `headquarters_address` y `consulting_room`."
+          },
+          "response": [
+            {
+              "name": "Slots semanales de un médico",
+              "originalRequest": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+                "url": { "raw": "{{base_url}}/api/availability/slots/?doctor=1&specialty=1&date=2026-07-01&view=week" }
+              },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"view\": \"week\",\n  \"start_date\": \"2026-07-01\",\n  \"end_date\": \"2026-07-07\",\n  \"slots\": [\n    {\n      \"date\": \"2026-07-01\",\n      \"start_time\": \"08:00:00\",\n      \"end_time\": \"08:30:00\",\n      \"duration_minutes\": 30,\n      \"doctor_id\": 1,\n      \"doctor_name\": \"Dr(a). Carlos Perez\",\n      \"headquarters_id\": 1,\n      \"headquarters_name\": \"Sede Norte\",\n      \"headquarters_address\": \"Calle 100 # 15-20\",\n      \"consulting_room\": \"Consultorio 3\"\n    }\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Agendar Cita",
+      "item": [
+        {
+          "name": "Crear cita (con sede incluida automáticamente)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json();",
+                  "pm.test('Cita confirmada', () => pm.expect(data.status).to.equal('confirmada'));",
+                  "pm.test('Tiene headquarters_name', () => pm.expect(data).to.have.property('headquarters_name'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"scheduled_at\": \"2026-07-01T08:00:00\",\n  \"consultation_reason\": \"Control general\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/appointments/book/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "appointments", "book", ""]
+            },
+            "description": "Agenda la cita usando el `doctor_id` y `scheduled_at` obtenidos del slot seleccionado.\n\nLa sede queda registrada automáticamente desde la `DoctorAvailability` del slot (criterio HU14: validación de disponibilidad cruzada garantizada en el momento del booking).\n\n**Campos requeridos:** `doctor_id`, `specialty_id`, `scheduled_at`\n**Campos opcionales:** `consultation_reason`"
+          },
+          "response": [
+            {
+              "name": "Cita creada exitosamente",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"scheduled_at\": \"2026-07-01T08:00:00\",\n  \"consultation_reason\": \"Control general\"\n}"
+                },
+                "url": { "raw": "{{base_url}}/api/appointments/book/" }
+              },
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"id\": 42,\n  \"patient_name\": \"Maria Lopez\",\n  \"doctor_name\": \"Dr(a). Carlos Perez\",\n  \"specialty_name\": \"Medicina General\",\n  \"headquarters_name\": \"Sede Norte\",\n  \"scheduled_at\": \"2026-07-01T08:00:00-05:00\",\n  \"duration_minutes\": 30,\n  \"status\": \"confirmada\",\n  \"consultation_reason\": \"Control general\",\n  \"notes\": \"\",\n  \"created_at\": \"2026-06-22T23:00:00-05:00\"\n}"
+            },
+            {
+              "name": "Franja ya ocupada",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"scheduled_at\": \"2026-07-01T08:00:00\"\n}"
+                },
+                "url": { "raw": "{{base_url}}/api/appointments/book/" }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"scheduled_at\": \"Esta franja ya no está disponible.\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -37,6 +37,10 @@ class AppointmentBookingSetupMixin:
         self.patient = Patient.objects.create(
             user=patient_user,
             identity_document="123456789",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
             eps=self.eps,
         )
 
@@ -129,6 +133,10 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         Patient.objects.create(
             user=patient_user2,
             identity_document="999888777",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234568",
+            address="Calle 1 # 2-3",
             eps=self.eps,
         )
 
@@ -304,28 +312,44 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):
-        # Create a limit of 1 and a prior appointment so the count would exceed it
+        # Patient belongs to self.eps but limit is set on a different EPS — should be ignored.
+        eps2 = EPS.objects.create(name="EPS Solo", code="EPS002", active=True)
         EPSAppointmentLimit.objects.create(
-            eps=self.eps,
+            eps=eps2,
             specialty=self.specialty,
             period=Period.MONTHLY,
             max_appointments=1,
             active=True,
         )
+        # Pre-book to exhaust eps2's limit for another patient
+        other_user = User.objects.create_user(
+            email="otro_eps@test.com",
+            password=self.password,
+            nombre="Otro",
+            apellido="EPS",
+            rol=User.Role.PATIENT,
+        )
+        other_patient = Patient.objects.create(
+            user=other_user,
+            identity_document="000000002",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234572",
+            address="Calle 1 # 2-3",
+            eps=eps2,
+        )
         Appointment.objects.create(
-            patient=self.patient,
+            patient=other_patient,
             doctor=self.doctor,
             specialty=self.specialty,
             headquarters=self.headquarters,
             scheduled_at=make_aware(self.test_date, time(8, 0)),
             duration_minutes=30,
             status=Appointment.Status.CONFIRMED,
-            created_by=self.patient_user,
+            created_by=other_user,
         )
-        # Remove EPS from patient — validations should now be skipped entirely
-        self.patient.eps = None
-        self.patient.save()
 
+        # self.patient belongs to self.eps which has no limit — booking must succeed
         response = self.client.post(self.url, self.booking_payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -417,6 +441,11 @@ class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
         other_patient = Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234569",
+            address="Calle 1 # 2-3",
+            eps=self.eps,
         )
         Appointment.objects.create(
             patient=other_patient,
@@ -504,6 +533,11 @@ class AppointmentDetailTests(AppointmentBookingSetupMixin, APITestCase):
         Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234570",
+            address="Calle 1 # 2-3",
+            eps=self.eps,
         )
         self.client.force_authenticate(user=patient_user2)
 
