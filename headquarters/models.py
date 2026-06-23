@@ -6,7 +6,7 @@ class Headquarters(models.Model):
     address = models.CharField(max_length=255, blank=True, db_column="direccion")
     phone = models.CharField(max_length=30, blank=True, db_column="telefono")
     active = models.BooleanField(default=True, db_column="activo")
-
+    
     class Meta:
         db_table = "sedes"
         verbose_name = "sede"
@@ -15,3 +15,5 @@ class Headquarters(models.Model):
 
     def __str__(self):
         return self.name
+    
+    
