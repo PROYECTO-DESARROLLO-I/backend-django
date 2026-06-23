@@ -19,6 +19,14 @@ class Patient(models.Model):
         unique=True,
         db_column="documento_identidad",
     )
+    sede = models.ForeignKey(
+        "headquarters.Headquarters",
+        on_delete=models.SET_NULL,
+        null=True,         # Permite que empiece en null antes de que el algoritmo le asigne una
+        blank=True,
+        related_name="pacientes",
+        db_column="sede_id",
+    )
     document_type = models.CharField(
         max_length=5,
         choices=DocumentType.choices,
