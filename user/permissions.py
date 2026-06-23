@@ -16,3 +16,16 @@ class IsAdministrative(BasePermission):
             and request.user.is_authenticated
             and request.user.rol in _ADMIN_ROLES
         )
+
+
+class IsSuperAdmin(BasePermission):
+    """Allows access only to users with superadmin role."""
+
+    message = "Solo el superadministrador puede realizar esta acción."
+
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.rol == User.Role.SUPERADMIN
+        )
