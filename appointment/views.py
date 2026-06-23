@@ -41,6 +41,7 @@ class AppointmentCreateView(APIView):
 
         doctor_id = data["doctor_id"]
         specialty_id = data["specialty_id"]
+        headquarters_id = data["headquarters_id"]
         scheduled_at = data["scheduled_at"]
 
         if timezone.is_naive(scheduled_at):
@@ -51,7 +52,7 @@ class AppointmentCreateView(APIView):
             doctor = Doctor.objects.select_for_update().get(pk=doctor_id)
             specialty = Specialty.objects.get(pk=specialty_id)
 
-            avail = self._get_availability(doctor, specialty_id, scheduled_at)
+            avail = self._get_availability(doctor, specialty_id, headquarters_id, scheduled_at)
             duration_minutes = avail.appointment_duration
             slot_end = scheduled_at + timedelta(minutes=duration_minutes)
 
@@ -85,12 +86,16 @@ class AppointmentCreateView(APIView):
             status=status.HTTP_201_CREATED,
         )
 
-    def _get_availability(self, doctor, specialty_id, scheduled_at):
+    def _get_availability(self, doctor, specialty_id, headquarters_id, scheduled_at):
         weekday = scheduled_at.weekday()
         slot_time = scheduled_at.time()
 
         for avail in DoctorAvailability.objects.filter(
-            doctor=doctor, specialty_id=specialty_id, active=True, weekday=weekday
+            doctor=doctor,
+            specialty_id=specialty_id,
+            headquarters_id=headquarters_id,
+            active=True,
+            weekday=weekday,
         ).select_related("headquarters"):
             start_min = avail.start_time.hour * 60 + avail.start_time.minute
             slot_min = slot_time.hour * 60 + slot_time.minute
@@ -107,7 +112,7 @@ class AppointmentCreateView(APIView):
             return avail
 
         raise ValidationError(
-            {"scheduled_at": "La franja horaria seleccionada no corresponde a una disponibilidad válida del médico."}
+            {"scheduled_at": "La franja horaria seleccionada no corresponde a una disponibilidad válida del médico en esa sede."}
         )
 
     def _check_no_schedule_exception(self, doctor, scheduled_at):

@@ -8,6 +8,7 @@ from specialties.models import Specialty
 class AppointmentCreateSerializer(serializers.Serializer):
     doctor_id = serializers.IntegerField()
     specialty_id = serializers.IntegerField()
+    headquarters_id = serializers.IntegerField()
     scheduled_at = serializers.DateTimeField()
     consultation_reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
 
@@ -19,6 +20,12 @@ class AppointmentCreateSerializer(serializers.Serializer):
     def validate_specialty_id(self, value):
         if not Specialty.objects.filter(pk=value, active=True).exists():
             raise serializers.ValidationError("La especialidad no existe o no está activa.")
+        return value
+
+    def validate_headquarters_id(self, value):
+        from headquarters.models import Headquarters
+        if not Headquarters.objects.filter(pk=value, active=True).exists():
+            raise serializers.ValidationError("La sede no existe o no está activa.")
         return value
 
 

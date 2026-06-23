@@ -81,6 +81,7 @@ class AppointmentBookingSetupMixin:
         payload = {
             "doctor_id": self.doctor.id,
             "specialty_id": self.specialty.id,
+            "headquarters_id": self.headquarters.id,
             "scheduled_at": self.scheduled_at.isoformat(),
             "consultation_reason": "Control general",
         }
@@ -169,6 +170,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
             DoctorAvailability.objects.create(
                 doctor=doctor2,
                 specialty=specialty2,
+                headquarters=self.headquarters,
                 weekday=weekday,
                 start_time=time(8, 0),
                 end_time=time(17, 0),
@@ -184,6 +186,15 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Ya tienes una cita agendada en ese horario", str(response.data))
+
+    def test_rejects_booking_when_headquarters_does_not_match_availability(self):
+        other_hq = Headquarters.objects.create(name="Sede Incorrecta", active=True)
+
+        payload = self.booking_payload(headquarters_id=other_hq.id)
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("no corresponde a una disponibilidad válida", str(response.data))
 
     def test_rejects_slot_that_is_not_in_doctor_availability(self):
         payload = self.booking_payload(
@@ -309,6 +320,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("doctor_id", response.data)
         self.assertIn("specialty_id", response.data)
+        self.assertIn("headquarters_id", response.data)
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):

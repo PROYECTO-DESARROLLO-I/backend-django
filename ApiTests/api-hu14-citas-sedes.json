@@ -362,7 +362,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"scheduled_at\": \"2026-07-01T08:00:00\",\n  \"consultation_reason\": \"Control general\"\n}",
+              "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"headquarters_id\": 1,\n  \"scheduled_at\": \"2026-07-01T08:00:00\",\n  \"consultation_reason\": \"Control general\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -370,7 +370,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "appointments", "book", ""]
             },
-            "description": "Agenda la cita usando el `doctor_id` y `scheduled_at` obtenidos del slot seleccionado.\n\nLa sede queda registrada automáticamente desde la `DoctorAvailability` del slot (criterio HU14: validación de disponibilidad cruzada garantizada en el momento del booking).\n\n**Campos requeridos:** `doctor_id`, `specialty_id`, `scheduled_at`\n**Campos opcionales:** `consultation_reason`"
+            "description": "Agenda la cita en la sede que el paciente seleccionó.\n\nEl sistema valida que el médico tenga disponibilidad activa en esa sede exacta para la franja horaria indicada. Si el `headquarters_id` no coincide con la disponibilidad del médico, retorna 400.\n\n**Campos requeridos:** `doctor_id`, `specialty_id`, `headquarters_id`, `scheduled_at`\n**Campos opcionales:** `consultation_reason`"
           },
           "response": [
             {
@@ -401,7 +401,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"scheduled_at\": \"2026-07-01T08:00:00\"\n}"
+                  "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"headquarters_id\": 1,\n  \"scheduled_at\": \"2026-07-01T08:00:00\"\n}"
                 },
                 "url": { "raw": "{{base_url}}/api/appointments/book/" }
               },
