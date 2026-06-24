@@ -4,10 +4,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from .models import Headquarters
 from .serializers import HeadquartersSerializer
-from user.permissions import IsSuperAdmin
+from user.permissions import IsAdministrativeUser
 
 class HeadquartersListCreateAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrativeUser]
 
     def get(self, request):
         sedes = Headquarters.objects.filter(active=True)

@@ -18,7 +18,7 @@ class IsAdministrative(BasePermission):
         )
 
 
-class IsSuperAdmin(BasePermission):
+class IsAdministrativeUser(BasePermission):
     """Allows access only to users with superadmin role."""
 
     message = "Solo el superadministrador puede realizar esta acción."
@@ -27,5 +27,6 @@ class IsSuperAdmin(BasePermission):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.rol == User.Role.SUPERADMIN
+            and request.user.rol in [User.Role.SUPERADMIN,User.Role.ADMINISTRATIVE]
         )
+
