@@ -38,6 +38,7 @@ class AppointmentBookingSetupMixin:
             user=patient_user,
             identity_document="123456789",
             eps=self.eps,
+            date_birth="2000-01-01",
         )
 
         doctor_user = User.objects.create_user(
@@ -130,6 +131,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
             user=patient_user2,
             identity_document="999888777",
             eps=self.eps,
+            date_birth="1995-05-12",
         )
 
         self.client.post(self.url, self.booking_payload(), format="json")
@@ -144,7 +146,6 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
     def test_rejects_when_patient_already_has_overlapping_appointment(self, mock_email):
         self.client.post(self.url, self.booking_payload(), format="json")
 
-        # Same patient, same time on a different specialty/doctor — still overlaps
         specialty2 = Specialty.objects.create(name="Dermatologia", active=True)
         doctor_user2 = User.objects.create_user(
             email="medico2@test.com",
@@ -304,7 +305,6 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):
-        # Create a limit of 1 and a prior appointment so the count would exceed it
         EPSAppointmentLimit.objects.create(
             eps=self.eps,
             specialty=self.specialty,
@@ -322,8 +322,11 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
             status=Appointment.Status.CONFIRMED,
             created_by=self.patient_user,
         )
-        # Remove EPS from patient — validations should now be skipped entirely
-        self.patient.eps = None
+        
+        # En vez de asignar None (que viola el NOT NULL de la Base de Datos), 
+        # le creamos una EPS alternativa sin límites asociados para saltar la validación.
+        particular_eps = EPS.objects.create(name="Particular / Sin EPS", code="PART01", active=True)
+        self.patient.eps = particular_eps
         self.patient.save()
 
         response = self.client.post(self.url, self.booking_payload(), format="json")
@@ -348,13 +351,12 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_eps_budget_blocks_booking_after_limit_is_reached(self, mock_email):
-        """Second booking is rejected once used_budget reaches total_budget."""
         second_date = self.test_date + timedelta(days=1)
         EPSBudget.objects.create(
             eps=self.eps,
             specialty=self.specialty,
             period_start=self.test_date.replace(day=1),
-            period_end=second_date,  # covers both booking dates
+            period_end=second_date,
             total_budget=1,
             used_budget=0,
         )
@@ -417,6 +419,8 @@ class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
         other_patient = Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
+            date_birth="1992-08-20",
+            eps=self.eps,
         )
         Appointment.objects.create(
             patient=other_patient,
@@ -504,6 +508,8 @@ class AppointmentDetailTests(AppointmentBookingSetupMixin, APITestCase):
         Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
+            date_birth="1994-11-05",
+            eps=self.eps,
         )
         self.client.force_authenticate(user=patient_user2)
 
