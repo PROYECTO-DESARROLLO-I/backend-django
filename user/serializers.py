@@ -51,6 +51,32 @@ class LogoutSerializer(serializers.Serializer):
         write_only=True,
     )
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        if not any(c.isdigit() for c in value):
+            raise serializers.ValidationError(
+                "La contraseña debe incluir al menos un número."
+            )
+        return value
+
+    def validate(self, data):
+        if data.get("new_password") != data.get("confirm_password"):
+            raise serializers.ValidationError(
+                {"confirm_password": "Las contraseñas no coinciden."}
+            )
+        return data
+
+
 class PatientRegisterSerializer(serializers.Serializer):
     #Datos del user
     nombre = serializers.CharField(max_length=100)

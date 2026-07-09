@@ -1,7 +1,12 @@
 from datetime import timedelta
 
+from django.contrib.auth.tokens import default_token_generator
+from django.core import mail
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -325,3 +330,236 @@ class AuthenticationEndpointTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["detail"], "No fue posible cerrar la sesión")
+
+
+class PasswordResetRequestTests(APITestCase):
+    def setUp(self):
+        self.url = reverse("password-reset-request")
+        self.password = "ClaveSegura123*"
+
+    def create_user(self, **kwargs):
+        defaults = {
+            "email": "usuario@clinica.test",
+            "password": self.password,
+            "nombre": "Ana",
+            "apellido": "Gomez",
+            "rol": User.Role.PATIENT,
+        }
+        defaults.update(kwargs)
+        return User.objects.create_user(**defaults)
+
+    def test_registered_email_returns_generic_message_and_sends_email(self):
+        user = self.create_user()
+
+        response = self.client.post(self.url, {"email": user.email}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["detail"],
+            "Si el correo está registrado, se ha enviado un enlace de recuperación.",
+        )
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(user.email, mail.outbox[0].to)
+
+    def test_unregistered_email_returns_same_generic_message_and_no_email(self):
+        response = self.client.post(
+            self.url, {"email": "noexiste@clinica.test"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["detail"],
+            "Si el correo está registrado, se ha enviado un enlace de recuperación.",
+        )
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_invalid_email_format_returns_bad_request(self):
+        response = self.client.post(
+            self.url, {"email": "no-es-un-correo"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_inactive_user_returns_generic_message_and_no_email(self):
+        user = self.create_user(is_active=False)
+
+        response = self.client.post(self.url, {"email": user.email}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["detail"],
+            "Si el correo está registrado, se ha enviado un enlace de recuperación.",
+        )
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_email_body_contains_reset_link_with_uid_and_token(self):
+        user = self.create_user()
+
+        response = self.client.post(self.url, {"email": user.email}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        body = mail.outbox[0].body
+        self.assertIn("uid=", body)
+        self.assertIn("token=", body)
+
+
+class PasswordResetConfirmTests(APITestCase):
+    def setUp(self):
+        self.url = reverse("password-reset-confirm")
+        self.login_url = reverse("auth-login")
+        self.password = "ClaveSegura123*"
+        self.user = User.objects.create_user(
+            email="usuario@clinica.test",
+            password=self.password,
+            nombre="Ana",
+            apellido="Gomez",
+            rol=User.Role.PATIENT,
+        )
+
+    def build_uid_and_token(self, user=None):
+        user = user or self.user
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        return uid, token
+
+    def confirm(self, uid, token, new_password="NuevaClave123", confirm_password=None):
+        return self.client.post(
+            self.url,
+            {
+                "uid": uid,
+                "token": token,
+                "new_password": new_password,
+                "confirm_password": (
+                    confirm_password if confirm_password is not None else new_password
+                ),
+            },
+            format="json",
+        )
+
+    def test_valid_token_and_password_updates_password(self):
+        uid, token = self.build_uid_and_token()
+
+        response = self.confirm(uid, token, "NuevaClave123", "NuevaClave123")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["detail"],
+            "Tu contraseña ha sido actualizada exitosamente.",
+        )
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("NuevaClave123"))
+
+    def test_reusing_same_token_after_success_returns_bad_request(self):
+        uid, token = self.build_uid_and_token()
+        first_response = self.confirm(uid, token, "NuevaClave123", "NuevaClave123")
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+
+        second_response = self.confirm(uid, token, "OtraClave456", "OtraClave456")
+
+        self.assertEqual(second_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            second_response.data["detail"],
+            "El enlace de recuperación es inválido o ha expirado.",
+        )
+
+    def test_corrupted_token_returns_generic_bad_request(self):
+        uid, _ = self.build_uid_and_token()
+
+        response = self.confirm(uid, "token-invalido", "NuevaClave123", "NuevaClave123")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["detail"],
+            "El enlace de recuperación es inválido o ha expirado.",
+        )
+
+    def test_corrupted_uid_returns_generic_bad_request(self):
+        _, token = self.build_uid_and_token()
+
+        response = self.confirm(
+            "uid-invalido", token, "NuevaClave123", "NuevaClave123"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["detail"],
+            "El enlace de recuperación es inválido o ha expirado.",
+        )
+
+    @override_settings(PASSWORD_RESET_TIMEOUT=-1)
+    def test_expired_token_returns_generic_bad_request(self):
+        uid, token = self.build_uid_and_token()
+
+        response = self.confirm(uid, token, "NuevaClave123", "NuevaClave123")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["detail"],
+            "El enlace de recuperación es inválido o ha expirado.",
+        )
+
+    def test_mismatched_passwords_returns_bad_request(self):
+        uid, token = self.build_uid_and_token()
+
+        response = self.confirm(uid, token, "NuevaClave123", "OtraClave456")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_password_shorter_than_8_characters_returns_bad_request(self):
+        uid, token = self.build_uid_and_token()
+
+        response = self.confirm(uid, token, "Corta1", "Corta1")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_password_without_digits_returns_bad_request(self):
+        uid, token = self.build_uid_and_token()
+
+        response = self.confirm(uid, token, "ClaveSinNumeros", "ClaveSinNumeros")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_login_works_with_new_password_after_reset(self):
+        uid, token = self.build_uid_and_token()
+        reset_response = self.confirm(uid, token, "NuevaClave123", "NuevaClave123")
+        self.assertEqual(reset_response.status_code, status.HTTP_200_OK)
+
+        login_response = self.client.post(
+            self.login_url,
+            {"email": self.user.email, "password": "NuevaClave123"},
+            format="json",
+        )
+
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", login_response.data)
+
+    def test_locked_user_is_unlocked_after_successful_reset(self):
+        self.user.failed_login_attempts = 5
+        self.user.locked_until = timezone.now() + timedelta(minutes=15)
+        self.user.save(
+            update_fields=["failed_login_attempts", "locked_until", "updated_at"]
+        )
+        uid, token = self.build_uid_and_token()
+
+        response = self.confirm(uid, token, "NuevaClave123", "NuevaClave123")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.failed_login_attempts, 0)
+        self.assertIsNone(self.user.locked_until)
+
+    def test_inactive_user_returns_generic_bad_request_and_password_unchanged(self):
+        uid, token = self.build_uid_and_token()
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+
+        response = self.confirm(uid, token, "NuevaClave123", "NuevaClave123")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["detail"],
+            "El enlace de recuperación es inválido o ha expirado.",
+        )
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.password))

@@ -33,6 +33,31 @@ def send_doctor_welcome(doctor):
         pass
 
 
+def send_password_reset_link(user, reset_url):
+    subject = "Recuperación de contraseña — Salud AgendaX"
+    message = (
+        f"Hola {user.nombre},\n\n"
+        f"Recibimos una solicitud para restablecer la contraseña de tu cuenta en Salud AgendaX.\n\n"
+        f"Para continuar, ingresa al siguiente enlace:\n\n"
+        f"  {reset_url}\n\n"
+        f"Este enlace expira en 15 minutos.\n\n"
+        f"Si no solicitaste este cambio, puedes ignorar este mensaje.\n\n"
+        f"Salud AgendaX"
+    )
+
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+    except Exception:
+        # El envío no debe romper el flujo si el correo no se puede enviar
+        pass
+
+
 def send_appointment_confirmation(appointment):
     patient_user = appointment.patient.user
     doctor = appointment.doctor
