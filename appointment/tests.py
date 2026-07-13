@@ -176,7 +176,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         response = self.client.post(self.url, payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("Ya tienes una cita agendada en ese horario", str(response.data))
+        self.assertIn("El paciente ya tiene una cita agendada en ese horario.", str(response.data))
 
     def test_rejects_slot_that_is_not_in_doctor_availability(self):
         payload = self.booking_payload(
@@ -275,19 +275,6 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("presupuestal", str(response.data))
 
-    def test_rejects_non_patient_user(self):
-        admin_user = User.objects.create_user(
-            email="admin@test.com",
-            password=self.password,
-            nombre="Admin",
-            apellido="Sistema",
-            rol=User.Role.ADMINISTRATIVE,
-        )
-        self.client.force_authenticate(user=admin_user)
-
-        response = self.client.post(self.url, self.booking_payload(), format="json")
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_requires_authentication(self):
         self.client.force_authenticate(user=None)
@@ -451,19 +438,19 @@ class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_rejects_non_patient_user(self):
-        admin_user = User.objects.create_user(
-            email="admin@test.com",
+        medico_user = User.objects.create_user(
+            email="medico_test_list_block@test.com",
             password=self.password,
-            nombre="Admin",
-            apellido="Sistema",
-            rol=User.Role.ADMINISTRATIVE,
+            nombre="Medico",
+            apellido="Prueba",
+            rol=User.Role.DOCTOR,  
         )
-        self.client.force_authenticate(user=admin_user)
+        self.client.force_authenticate(user=medico_user)
 
+        # CAMBIO: Usar .get() en lugar de .post() y quitar el payload
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
 
 class AppointmentDetailTests(AppointmentBookingSetupMixin, APITestCase):
     def setUp(self):
