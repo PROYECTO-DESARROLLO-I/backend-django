@@ -1,3 +1,521 @@
-from django.test import TestCase
+from datetime import date, datetime, time, timedelta
+from unittest.mock import patch
 
-# Create your tests here.
+from django.urls import reverse
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.test import APITestCase
+
+from appointment.models import Appointment
+from availability.models import DoctorAvailability, ScheduleException
+from doctor.models import Doctor, DoctorSpecialty
+from eps.models import EPS
+from headquarters.models import Headquarters
+from patient.models import Patient
+from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
+from specialties.models import Specialty
+from user.models import User
+
+
+def make_aware(d, t):
+    return timezone.make_aware(datetime.combine(d, t))
+
+
+class AppointmentBookingSetupMixin:
+    password = "ClaveSegura123*"
+
+    def build_scenario(self):
+        self.eps = EPS.objects.create(name="EPS Test", code="EPS001", active=True)
+
+        patient_user = User.objects.create_user(
+            email="paciente@test.com",
+            password=self.password,
+            nombre="Maria",
+            apellido="Lopez",
+            rol=User.Role.PATIENT,
+        )
+        self.patient = Patient.objects.create(
+            user=patient_user,
+            identity_document="123456789",
+            eps=self.eps,
+            date_birth="2000-01-01",
+        )
+
+        doctor_user = User.objects.create_user(
+            email="medico@test.com",
+            password=self.password,
+            nombre="Carlos",
+            apellido="Perez",
+            rol=User.Role.DOCTOR,
+        )
+        self.specialty = Specialty.objects.create(name="Medicina General", active=True)
+        self.headquarters = Headquarters.objects.create(name="Sede Central", active=True)
+        self.doctor = Doctor.objects.create(
+            user=doctor_user,
+            identity_document="987654321",
+            active=True,
+        )
+        DoctorSpecialty.objects.create(doctor=self.doctor, specialty=self.specialty)
+
+        for weekday in range(7):
+            DoctorAvailability.objects.create(
+                doctor=self.doctor,
+                specialty=self.specialty,
+                headquarters=self.headquarters,
+                weekday=weekday,
+                start_time=time(8, 0),
+                end_time=time(17, 0),
+                appointment_duration=30,
+                active=True,
+            )
+
+        self.test_date = date.today() + timedelta(days=2)
+        self.scheduled_at = make_aware(self.test_date, time(9, 0))
+        self.patient_user = patient_user
+        self.client.force_authenticate(user=patient_user)
+
+    def booking_payload(self, **overrides):
+        payload = {
+            "doctor_id": self.doctor.id,
+            "specialty_id": self.specialty.id,
+            "scheduled_at": self.scheduled_at.isoformat(),
+            "consultation_reason": "Control general",
+        }
+        payload.update(overrides)
+        return payload
+
+
+class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
+    def setUp(self):
+        self.url = reverse("appointment-create")
+        self.build_scenario()
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_creates_appointment_with_confirmed_status(self, mock_email):
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], Appointment.Status.CONFIRMED)
+        self.assertTrue(Appointment.objects.filter(patient=self.patient).exists())
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_response_includes_expected_appointment_fields(self, mock_email):
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertIn("id", response.data)
+        self.assertIn("doctor_name", response.data)
+        self.assertIn("specialty_name", response.data)
+        self.assertIn("scheduled_at", response.data)
+        self.assertIn("duration_minutes", response.data)
+        self.assertEqual(response.data["specialty_name"], "Medicina General")
+        self.assertIn("Carlos", response.data["doctor_name"])
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_sends_confirmation_notification(self, mock_email):
+        self.client.post(self.url, self.booking_payload(), format="json")
+
+        mock_email.assert_called_once()
+        appointment_arg = mock_email.call_args[0][0]
+        self.assertEqual(appointment_arg.patient, self.patient)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_blocks_slot_so_second_patient_cannot_book_same_time(self, mock_email):
+        patient_user2 = User.objects.create_user(
+            email="paciente2@test.com",
+            password=self.password,
+            nombre="Juan",
+            apellido="Torres",
+            rol=User.Role.PATIENT,
+        )
+        Patient.objects.create(
+            user=patient_user2,
+            identity_document="999888777",
+            eps=self.eps,
+            date_birth="1995-05-12",
+        )
+
+        self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.client.force_authenticate(user=patient_user2)
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Esta franja ya no está disponible", str(response.data))
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_rejects_when_patient_already_has_overlapping_appointment(self, mock_email):
+        self.client.post(self.url, self.booking_payload(), format="json")
+
+        specialty2 = Specialty.objects.create(name="Dermatologia", active=True)
+        doctor_user2 = User.objects.create_user(
+            email="medico2@test.com",
+            password=self.password,
+            nombre="Ana",
+            apellido="Rios",
+            rol=User.Role.DOCTOR,
+        )
+        doctor2 = Doctor.objects.create(
+            user=doctor_user2, identity_document="111111111", active=True
+        )
+        DoctorSpecialty.objects.create(doctor=doctor2, specialty=specialty2)
+        for weekday in range(7):
+            DoctorAvailability.objects.create(
+                doctor=doctor2,
+                specialty=specialty2,
+                weekday=weekday,
+                start_time=time(8, 0),
+                end_time=time(17, 0),
+                appointment_duration=30,
+                active=True,
+            )
+
+        payload = self.booking_payload(
+            doctor_id=doctor2.id,
+            specialty_id=specialty2.id,
+        )
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("El paciente ya tiene una cita agendada en ese horario.", str(response.data))
+
+    def test_rejects_slot_that_is_not_in_doctor_availability(self):
+        payload = self.booking_payload(
+            scheduled_at=make_aware(self.test_date, time(23, 0)).isoformat()
+        )
+
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("no corresponde a una disponibilidad válida", str(response.data))
+
+    def test_rejects_when_doctor_has_schedule_exception_on_that_day(self):
+        ScheduleException.objects.create(
+            doctor=self.doctor,
+            date=self.test_date,
+            type=ScheduleException.ExceptionType.VACATION,
+        )
+
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("no tiene disponibilidad en esa fecha", str(response.data))
+
+    def test_rejects_when_frequency_restriction_is_exceeded(self):
+        FrequencyRestriction.objects.create(
+            specialty=self.specialty,
+            period=Period.WEEKLY,
+            max_appointments_per_patient=1,
+        )
+        admin_user = User.objects.create_user(
+            email="admin@test.com",
+            password=self.password,
+            nombre="Admin",
+            apellido="Sistema",
+            rol=User.Role.ADMINISTRATIVE,
+        )
+        Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=make_aware(self.test_date, time(8, 0)),
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=admin_user,
+        )
+
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Has alcanzado el límite", str(response.data))
+
+    def test_rejects_when_eps_appointment_limit_is_exceeded(self):
+        EPSAppointmentLimit.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period=Period.MONTHLY,
+            max_appointments=1,
+            active=True,
+        )
+        admin_user = User.objects.create_user(
+            email="admin@test.com",
+            password=self.password,
+            nombre="Admin",
+            apellido="Sistema",
+            rol=User.Role.ADMINISTRATIVE,
+        )
+        Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=make_aware(self.test_date, time(8, 0)),
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=admin_user,
+        )
+
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("tope", str(response.data))
+
+    def test_rejects_when_eps_has_no_remaining_budget(self):
+        EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=100,
+            used_budget=100,
+        )
+
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("presupuestal", str(response.data))
+
+
+    def test_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_returns_400_when_required_fields_are_missing(self):
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("doctor_id", response.data)
+        self.assertIn("specialty_id", response.data)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):
+        EPSAppointmentLimit.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period=Period.MONTHLY,
+            max_appointments=1,
+            active=True,
+        )
+        Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=make_aware(self.test_date, time(8, 0)),
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=self.patient_user,
+        )
+        
+        # En vez de asignar None (que viola el NOT NULL de la Base de Datos), 
+        # le creamos una EPS alternativa sin límites asociados para saltar la validación.
+        particular_eps = EPS.objects.create(name="Particular / Sin EPS", code="PART01", active=True)
+        self.patient.eps = particular_eps
+        self.patient.save()
+
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_increments_eps_used_budget_after_booking(self, mock_email):
+        budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=10,
+            used_budget=0,
+        )
+
+        self.client.post(self.url, self.booking_payload(), format="json")
+
+        budget.refresh_from_db()
+        self.assertEqual(budget.used_budget, 1)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_eps_budget_blocks_booking_after_limit_is_reached(self, mock_email):
+        second_date = self.test_date + timedelta(days=1)
+        EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=second_date,
+            total_budget=1,
+            used_budget=0,
+        )
+        first_slot = make_aware(self.test_date, time(9, 0))
+        second_slot = make_aware(second_date, time(9, 0))
+
+        self.client.post(self.url, self.booking_payload(scheduled_at=first_slot.isoformat()), format="json")
+        response = self.client.post(self.url, self.booking_payload(scheduled_at=second_slot.isoformat()), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("presupuestal", str(response.data))
+
+
+class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
+    def setUp(self):
+        self.url = reverse("appointment-list")
+        self.build_scenario()
+
+    def _create_appointment(self, slot_time=time(9, 0)):
+        return Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=make_aware(self.test_date, slot_time),
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=self.patient_user,
+        )
+
+    def test_returns_appointments_for_authenticated_patient(self):
+        self._create_appointment()
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+
+    def test_response_includes_expected_fields(self):
+        self._create_appointment()
+
+        response = self.client.get(self.url)
+
+        appt = response.data[0]
+        self.assertIn("id", appt)
+        self.assertIn("doctor_name", appt)
+        self.assertIn("specialty_name", appt)
+        self.assertIn("scheduled_at", appt)
+        self.assertIn("status", appt)
+
+    def test_does_not_return_other_patients_appointments(self):
+        self._create_appointment()
+        patient_user2 = User.objects.create_user(
+            email="otro@test.com",
+            password=self.password,
+            nombre="Otro",
+            apellido="Paciente",
+            rol=User.Role.PATIENT,
+        )
+        other_patient = Patient.objects.create(
+            user=patient_user2,
+            identity_document="000111222",
+            date_birth="1992-08-20",
+            eps=self.eps,
+        )
+        Appointment.objects.create(
+            patient=other_patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            scheduled_at=make_aware(self.test_date, time(10, 0)),
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=patient_user2,
+        )
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(len(response.data), 1)
+        self.assertIn("Maria", response.data[0].get("patient_name", "Maria"))
+
+    def test_returns_empty_list_when_patient_has_no_appointments(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 0)
+
+    def test_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_rejects_non_patient_user(self):
+        medico_user = User.objects.create_user(
+            email="medico_test_list_block@test.com",
+            password=self.password,
+            nombre="Medico",
+            apellido="Prueba",
+            rol=User.Role.DOCTOR,  
+        )
+        self.client.force_authenticate(user=medico_user)
+
+        # CAMBIO: Usar .get() en lugar de .post() y quitar el payload
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+class AppointmentDetailTests(AppointmentBookingSetupMixin, APITestCase):
+    def setUp(self):
+        self.build_scenario()
+
+    def _create_appointment(self):
+        return Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=make_aware(self.test_date, time(9, 0)),
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=self.patient_user,
+        )
+
+    def test_returns_full_appointment_detail(self):
+        appointment = self._create_appointment()
+        url = reverse("appointment-detail", args=[appointment.id])
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], appointment.id)
+        self.assertIn("Carlos", response.data["doctor_name"])
+        self.assertEqual(response.data["specialty_name"], "Medicina General")
+        self.assertEqual(response.data["headquarters_name"], "Sede Central")
+        self.assertEqual(response.data["status"], Appointment.Status.CONFIRMED)
+
+    def test_rejects_access_to_another_patients_appointment(self):
+        appointment = self._create_appointment()
+        url = reverse("appointment-detail", args=[appointment.id])
+
+        patient_user2 = User.objects.create_user(
+            email="otro@test.com",
+            password=self.password,
+            nombre="Otro",
+            apellido="Paciente",
+            rol=User.Role.PATIENT,
+        )
+        Patient.objects.create(
+            user=patient_user2,
+            identity_document="000111222",
+            date_birth="1994-11-05",
+            eps=self.eps,
+        )
+        self.client.force_authenticate(user=patient_user2)
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_returns_400_for_nonexistent_appointment(self):
+        url = reverse("appointment-detail", args=[99999])
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_requires_authentication(self):
+        appointment = self._create_appointment()
+        url = reverse("appointment-detail", args=[appointment.id])
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

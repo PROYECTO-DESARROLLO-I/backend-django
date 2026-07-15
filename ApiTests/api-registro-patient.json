@@ -1,0 +1,138 @@
+{
+  "info": {
+    "_postman_id": "42c525e2-f34f-44d7-b513-7855d4e72b43",
+    "name": "APIs saludAgendaX",
+    "description": "### Welcome to Postman! This is your first collection. \n\nCollections are your starting point for building and testing APIs. You can use this one to:\n\n• Group related requests\n• Test your API in real-world scenarios\n• Document and share your requests\n\nUpdate the name and overview whenever you’re ready to make it yours.\n\n[Learn more about Postman Collections.](https://learning.postman.com/docs/collections/collections-overview/)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "55892879"
+  },
+  "item": [
+    {
+      "name": "Registro paciente",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"user\": {\r\n    \"email\": \"paciente.prueba@gmail.com\",\r\n    \"password\": \"PasswordSegura123*\",\r\n    \"nombre\": \"Andrés\",\r\n    \"apellido\": \"Mendoza\"\r\n  },\r\n  \"document_type\": \"CC\",\r\n  \"identity_document\": \"1098765432\",\r\n  \"date_birth\": \"1996-03-20\",\r\n  \"phone_number\": \"+573104567890\",\r\n  \"address\": \"Avenida Siempre Viva 123\",\r\n  \"eps\": 1\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8000/api/patients/register/",
+          "protocol": "http",
+          "host": [
+            "127",
+            "0",
+            "0",
+            "1"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "patients",
+            "register",
+            ""
+          ]
+        }
+      },
+      "response": [
+        {
+          "name": "Registro paciente",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n  \"user\": {\r\n    \"email\": \"paciente.prueba@gmail.com\",\r\n    \"password\": \"PasswordSegura123*\",\r\n    \"nombre\": \"Andrés\",\r\n    \"apellido\": \"Mendoza\"\r\n  },\r\n  \"document_type\": \"CC\",\r\n  \"identity_document\": \"1098765432\",\r\n  \"date_birth\": \"1996-03-20\",\r\n  \"phone_number\": \"+573104567890\",\r\n  \"address\": \"Avenida Siempre Viva 123\",\r\n  \"eps\": 1\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://127.0.0.1:8000/api/patients/register/",
+              "protocol": "http",
+              "host": [
+                "127",
+                "0",
+                "0",
+                "1"
+              ],
+              "port": "8000",
+              "path": [
+                "api",
+                "patients",
+                "register",
+                ""
+              ]
+            }
+          },
+          "status": "Created",
+          "code": 201,
+          "_postman_previewlanguage": null,
+          "header": [
+            {
+              "key": "Date",
+              "value": "Sun, 14 Jun 2026 21:26:06 GMT"
+            },
+            {
+              "key": "Server",
+              "value": "WSGIServer/0.2 CPython/3.12.1"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept, origin"
+            },
+            {
+              "key": "Allow",
+              "value": "POST, OPTIONS"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "Content-Length",
+              "value": "294"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "same-origin"
+            },
+            {
+              "key": "Cross-Origin-Opener-Policy",
+              "value": "same-origin"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"id\": 1,\n    \"user\": {\n        \"id\": 2,\n        \"email\": \"paciente.prueba@gmail.com\",\n        \"nombre\": \"Andrés\",\n        \"apellido\": \"Mendoza\",\n        \"rol\": \"paciente\"\n    },\n    \"identity_document\": \"1098765432\",\n    \"document_type\": \"CC\",\n    \"date_birth\": \"1996-03-20\",\n    \"phone_number\": \"+573104567890\",\n    \"address\": \"Avenida Siempre Viva 123\",\n    \"eps\": {\n        \"id\": 1,\n        \"name\": \"Sura\"\n    }\n}"
+        }
+      ]
+    }
+  ]
+}

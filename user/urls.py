@@ -5,7 +5,7 @@ from user.views import InternalStaffRegisterView, LoginView, LogoutView, MeView
 from user.views import PatientRegisterView
 
 urlpatterns = [
-    path("auth/login/", LoginView.as_view(), name="auth-login"),
+    path("login/", LoginView.as_view(), name="auth-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),

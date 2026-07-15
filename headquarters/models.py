@@ -2,11 +2,11 @@ from django.db import models
 
 
 class Headquarters(models.Model):
-    name = models.CharField(max_length=150, db_column="nombre")
+    name = models.CharField(max_length=150, unique=True,db_column="nombre")
     address = models.CharField(max_length=255, blank=True, db_column="direccion")
     phone = models.CharField(max_length=30, blank=True, db_column="telefono")
     active = models.BooleanField(default=True, db_column="activo")
-
+    
     class Meta:
         db_table = "sedes"
         verbose_name = "sede"
@@ -15,3 +15,5 @@ class Headquarters(models.Model):
 
     def __str__(self):
         return self.name
+    
+    

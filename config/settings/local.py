@@ -3,6 +3,13 @@ from .base import *
 
 DEBUG = True 
 
+# `corsheaders` is already added in base settings. Avoid re-adding
+# it here to prevent duplicate application labels error.
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+]
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
