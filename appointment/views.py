@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -25,6 +25,13 @@ from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, P
 from specialties.models import Specialty
 from user.permissions import IsDoctor
 
+
+from django.contrib.auth import get_user_model
+from rest_framework.generics import ListAPIView
+from rest_framework.permissions import IsAuthenticated
+
+from patient.models import Patient
+from patient.serializers import PatientListSerializer
 
 def _get_patient(user):
     try:
@@ -100,13 +107,32 @@ class AppointmentCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        patient = _get_patient(request.user)
+
+
+        # --- CAMBIO PRINCIPAL PARA ADMITIR ADMINISTRATIVOS ---
+        if request.user.rol == "administrativo":
+            # El administrativo debe enviar el ID del paciente desde el frontend
+            patient_id = request.data.get("patient_id")
+            if not patient_id:
+                raise ValidationError({"patient_id": "Debe proporcionar el ID del paciente para agendar la cita."})
+            try:
+                patient = Patient.objects.get(pk=patient_id)
+            except Patient.DoesNotExist:
+                raise ValidationError({"patient_id": "El paciente seleccionado no existe."})
+        else:
+            # Si es un paciente normal, se obtiene automáticamente de su perfil
+            patient = _get_patient(request.user)
+        # -----------------------------------------------------
+
+
+        
         serializer = AppointmentCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
         doctor_id = data["doctor_id"]
         specialty_id = data["specialty_id"]
+        headquarters_id = data["headquarters_id"]
         scheduled_at = data["scheduled_at"]
 
         if timezone.is_naive(scheduled_at):
@@ -150,6 +176,63 @@ class AppointmentCreateView(APIView):
             AppointmentDetailSerializer(appointment).data,
             status=status.HTTP_201_CREATED,
         )
+
+    def _get_availability(self, doctor, specialty_id, headquarters_id, scheduled_at):
+        weekday = scheduled_at.weekday()
+        slot_time = scheduled_at.time()
+
+        for avail in DoctorAvailability.objects.filter(
+            doctor=doctor,
+            specialty_id=specialty_id,
+            headquarters_id=headquarters_id,
+            active=True,
+            weekday=weekday,
+        ).select_related("headquarters"):
+            start_min = avail.start_time.hour * 60 + avail.start_time.minute
+            slot_min = slot_time.hour * 60 + slot_time.minute
+            end_min = avail.end_time.hour * 60 + avail.end_time.minute
+
+            offset = slot_min - start_min
+            # Slot must start at an aligned boundary and fit within the window
+            if offset < 0:
+                continue
+            if offset % avail.appointment_duration != 0:
+                continue
+            if slot_min + avail.appointment_duration > end_min:
+                continue
+            return avail
+
+        raise ValidationError(
+            {"scheduled_at": "La franja horaria seleccionada no corresponde a una disponibilidad válida del médico en esa sede."}
+        )
+
+    def _check_no_schedule_exception(self, doctor, scheduled_at):
+        if ScheduleException.objects.filter(doctor=doctor, date=scheduled_at.date()).exists():
+            raise ValidationError(
+                {"scheduled_at": "El médico no tiene disponibilidad en esa fecha."}
+            )
+
+    def _check_slot_free(self, doctor, slot_start, slot_end):
+        for appt in Appointment.objects.filter(
+            doctor=doctor,
+            status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
+            scheduled_at__lt=slot_end,
+        ):
+            appt_end = appt.scheduled_at + timedelta(minutes=appt.duration_minutes)
+            if appt_end > slot_start:
+                raise ValidationError({"scheduled_at": "Esta franja ya no está disponible."})
+
+    def _check_patient_no_overlap(self, patient, slot_start, slot_end):
+        for appt in Appointment.objects.filter(
+            patient=patient,
+            status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
+            scheduled_at__lt=slot_end,
+        ):
+            appt_end = appt.scheduled_at + timedelta(minutes=appt.duration_minutes)
+            if appt_end > slot_start:
+                raise ValidationError(
+                    {"scheduled_at": "El paciente ya tiene una cita agendada en ese horario."}
+                )
 
     def _check_frequency_restriction(self, patient, specialty, scheduled_at):
         restrictions = FrequencyRestriction.objects.filter(
@@ -349,3 +432,40 @@ def _period_bounds(scheduled_at, period):
         else:
             last = first.replace(month=first.month + 1) - _td(days=1)
         return first, last
+
+
+# ==========================================
+#          BUSQUEDA PACIENTE
+# ==========================================
+
+class PatientSearchPermission(IsAuthenticated):
+    def has_permission(self, request, view):
+        # 1. Validamos primero si está autenticado usando el comportamiento directo
+        is_authenticated = request.user and request.user.is_authenticated
+        if not is_authenticated:
+            return False
+            
+        # 2. Comparamos directamente contra el string de tu base de datos
+        return request.user.rol == "administrativo"
+
+
+class PatientSearchView(ListAPIView):
+    permission_classes = [PatientSearchPermission]
+    serializer_class = PatientListSerializer
+
+    def get_queryset(self):
+        query = self.request.query_params.get('q', '').strip()
+        if not query:
+            return Patient.objects.none()
+
+        # Filtramos pacientes con cuentas activas
+        queryset = Patient.objects.filter(user__is_active=True)
+        
+        # Filtros de coincidencia por texto o documento
+        queryset = queryset.filter(
+            Q(user__nombre__icontains=query) |
+            Q(user__apellido__icontains=query) |
+            Q(identity_document__icontains=query) |
+            Q(user__email__icontains=query)
+        )
+        return queryset.select_related('user', 'eps')

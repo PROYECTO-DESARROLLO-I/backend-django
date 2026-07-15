@@ -37,6 +37,10 @@ class AppointmentBookingSetupMixin:
         self.patient = Patient.objects.create(
             user=patient_user,
             identity_document="123456789",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
             eps=self.eps,
             date_birth=date(1990, 1, 1),
         )
@@ -78,6 +82,7 @@ class AppointmentBookingSetupMixin:
         payload = {
             "doctor_id": self.doctor.id,
             "specialty_id": self.specialty.id,
+            "headquarters_id": self.headquarters.id,
             "scheduled_at": self.scheduled_at.isoformat(),
             "consultation_reason": "Control general",
         }
@@ -130,6 +135,10 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         Patient.objects.create(
             user=patient_user2,
             identity_document="999888777",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234568",
+            address="Calle 1 # 2-3",
             eps=self.eps,
             date_birth=date(1990, 1, 1),
         )
@@ -146,7 +155,6 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
     def test_rejects_when_patient_already_has_overlapping_appointment(self, mock_email):
         self.client.post(self.url, self.booking_payload(), format="json")
 
-        # Same patient, same time on a different specialty/doctor — still overlaps
         specialty2 = Specialty.objects.create(name="Dermatologia", active=True)
         doctor_user2 = User.objects.create_user(
             email="medico2@test.com",
@@ -163,6 +171,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
             DoctorAvailability.objects.create(
                 doctor=doctor2,
                 specialty=specialty2,
+                headquarters=self.headquarters,
                 weekday=weekday,
                 start_time=time(8, 0),
                 end_time=time(17, 0),
@@ -177,7 +186,16 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         response = self.client.post(self.url, payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("Ya tienes una cita agendada en ese horario", str(response.data))
+        self.assertIn("El paciente ya tiene una cita agendada en ese horario.", str(response.data))
+
+    def test_rejects_booking_when_headquarters_does_not_match_availability(self):
+        other_hq = Headquarters.objects.create(name="Sede Incorrecta", active=True)
+
+        payload = self.booking_payload(headquarters_id=other_hq.id)
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("no corresponde a una disponibilidad válida", str(response.data))
 
     def test_rejects_slot_that_is_not_in_doctor_availability(self):
         payload = self.booking_payload(
@@ -276,19 +294,6 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("presupuestal", str(response.data))
 
-    def test_rejects_non_patient_user(self):
-        admin_user = User.objects.create_user(
-            email="admin@test.com",
-            password=self.password,
-            nombre="Admin",
-            apellido="Sistema",
-            rol=User.Role.ADMINISTRATIVE,
-        )
-        self.client.force_authenticate(user=admin_user)
-
-        response = self.client.post(self.url, self.booking_payload(), format="json")
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_requires_authentication(self):
         self.client.force_authenticate(user=None)
@@ -303,31 +308,54 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("doctor_id", response.data)
         self.assertIn("specialty_id", response.data)
+        self.assertIn("headquarters_id", response.data)
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):
-        # Create a limit of 1 and a prior appointment so the count would exceed it
+        # Patient belongs to self.eps but limit is set on a different EPS — should be ignored.
+        eps2 = EPS.objects.create(name="EPS Solo", code="EPS002", active=True)
         EPSAppointmentLimit.objects.create(
-            eps=self.eps,
+            eps=eps2,
             specialty=self.specialty,
             period=Period.MONTHLY,
             max_appointments=1,
             active=True,
         )
+        # Pre-book to exhaust eps2's limit for another patient
+        other_user = User.objects.create_user(
+            email="otro_eps@test.com",
+            password=self.password,
+            nombre="Otro",
+            apellido="EPS",
+            rol=User.Role.PATIENT,
+        )
+        other_patient = Patient.objects.create(
+            user=other_user,
+            identity_document="000000002",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234572",
+            address="Calle 1 # 2-3",
+            eps=eps2,
+        )
         Appointment.objects.create(
-            patient=self.patient,
+            patient=other_patient,
             doctor=self.doctor,
             specialty=self.specialty,
             headquarters=self.headquarters,
             scheduled_at=make_aware(self.test_date, time(8, 0)),
             duration_minutes=30,
             status=Appointment.Status.CONFIRMED,
-            created_by=self.patient_user,
+            created_by=other_user,
         )
-        # Remove EPS from patient — validations should now be skipped entirely
-        self.patient.eps = None
+        
+        # En vez de asignar None (que viola el NOT NULL de la Base de Datos), 
+        # le creamos una EPS alternativa sin límites asociados para saltar la validación.
+        particular_eps = EPS.objects.create(name="Particular / Sin EPS", code="PART01", active=True)
+        self.patient.eps = particular_eps
         self.patient.save()
 
+        # self.patient belongs to self.eps which has no limit — booking must succeed
         response = self.client.post(self.url, self.booking_payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -350,13 +378,12 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_eps_budget_blocks_booking_after_limit_is_reached(self, mock_email):
-        """Second booking is rejected once used_budget reaches total_budget."""
         second_date = self.test_date + timedelta(days=1)
         EPSBudget.objects.create(
             eps=self.eps,
             specialty=self.specialty,
             period_start=self.test_date.replace(day=1),
-            period_end=second_date,  # covers both booking dates
+            period_end=second_date,
             total_budget=1,
             used_budget=0,
         )
@@ -451,19 +478,19 @@ class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_rejects_non_patient_user(self):
-        admin_user = User.objects.create_user(
-            email="admin@test.com",
+        medico_user = User.objects.create_user(
+            email="medico_test_list_block@test.com",
             password=self.password,
-            nombre="Admin",
-            apellido="Sistema",
-            rol=User.Role.ADMINISTRATIVE,
+            nombre="Medico",
+            apellido="Prueba",
+            rol=User.Role.DOCTOR,  
         )
-        self.client.force_authenticate(user=admin_user)
+        self.client.force_authenticate(user=medico_user)
 
+        # CAMBIO: Usar .get() en lugar de .post() y quitar el payload
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
 
 class AppointmentDetailTests(AppointmentBookingSetupMixin, APITestCase):
     def setUp(self):

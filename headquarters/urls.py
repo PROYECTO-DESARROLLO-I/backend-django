@@ -1,6 +1,7 @@
 from django.urls import path
-from .views import HeadquartersListCreateAPIView
+
+from headquarters.views import HeadquartersListView
 
 urlpatterns = [
-    path("", HeadquartersListCreateAPIView.as_view(), name="headquarters-list-create"),
+    path("", HeadquartersListView.as_view(), name="headquarters-list"),
 ]

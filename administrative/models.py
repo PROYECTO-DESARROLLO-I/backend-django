@@ -8,6 +8,13 @@ class Administrative(models.Model):
         related_name="administrative_profile",
         db_column="usuario_id",
     )
+    identity_document = models.CharField(
+        max_length=50,
+        unique=True,
+        null=True,
+        blank=True,
+        db_column="documento_identidad",
+    )
     headquarters = models.ForeignKey(
         "headquarters.Headquarters",
         on_delete=models.SET_NULL,

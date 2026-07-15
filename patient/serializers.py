@@ -87,3 +87,28 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
                 "name": instance.eps.get_name_display() if instance.eps else None,
             },
         }
+
+
+
+class PatientListSerializer(serializers.ModelSerializer):
+    user = UserResponseSerializer(read_only=True) 
+    eps = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Patient
+        fields = [
+            "id", 
+            "identity_document", 
+            "document_type", 
+            "phone_number",
+            "user",
+            "eps"
+        ]
+
+    def get_eps(self, instance):
+        if instance.eps:
+            return {
+                "id": instance.eps.id,
+                "name": instance.eps.name  
+            }
+        return None
