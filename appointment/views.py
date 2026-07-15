@@ -21,7 +21,7 @@ from appointment.serializers import (
 )
 from availability.models import DoctorAvailability, ScheduleException
 from doctor.models import Doctor
-from notifications.services import send_appointment_confirmation, send_appointment_rescheduled
+from notifications.services import send_appointment_confirmation, send_appointment_rescheduled, send_appointment_cancelled
 from patient.models import Patient
 from patient.serializers import PatientListSerializer
 from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
@@ -413,3 +413,57 @@ class PatientSearchView(ListAPIView):
             Q(user__email__icontains=query)
         )
         return queryset.select_related('user', 'eps')
+    
+
+class AppointmentCancelView(APIView):
+    """
+        POST /api/appointments/<id>/cancel/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        patient = _get_patient(request.user)  # Solo pacientes pueden cancelar sus propias citas
+
+        with transaction.atomic():
+            try:
+                # Busca la cita en el paciente autenticado
+                appointment = Appointment.objects.select_for_update(of=("self",)).select_related(
+                    "patient__user", "doctor__user", "specialty", "headquarters"
+                ).get(pk=pk, patient=patient)
+            except Appointment.DoesNotExist:
+                raise PermissionDenied(
+                    "No tienes permiso para cancelar esta cita."
+                )
+
+            #  Validaciones de estado de la cita
+            if appointment.status == Appointment.Status.ATTENDED:
+                raise ValidationError(
+                    {"detail": "No puedes cancelar una cita que ya fue atendida."}
+                )
+            if appointment.status == Appointment.Status.CANCELLED:
+                raise ValidationError(
+                    {"detail": "Esta cita ya está cancelada."}
+                )
+
+            # Actualiza el estado de la cita a CANCELLED y guarda en la base de datos
+            appointment.status = Appointment.Status.CANCELLED
+            appointment.save(update_fields=["status", "updated_at"])
+
+            # Guarda el historial de cambios de la cita, incluyendo la razón de cancelación
+            reason = request.data.get("reason", "Cancelación solicitada por el paciente")
+            AppointmentHistory.objects.create(
+                appointment=appointment,
+                previous_scheduled_at=appointment.scheduled_at,
+                new_scheduled_at=appointment.scheduled_at, 
+                changed_by=request.user, 
+                reason=reason,
+            )
+
+        # CA-5: Notificar al paciente y al médico sobre la cancelación de la cita
+        send_appointment_cancelled(appointment, cancelled_by=request.user)
+        
+        # Devuelve una respuesta exitosa con el ID de la cita cancelada
+        return Response(
+            {"detail": "Cita cancelada exitosamente.", "id": appointment.pk},
+            status=status.HTTP_200_OK,
+        )

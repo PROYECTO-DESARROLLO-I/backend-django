@@ -6,6 +6,7 @@ from appointment.views import (
     AppointmentListView,
     AppointmentRescheduleView,
     DoctorAppointmentListView,
+    AppointmentCancelView,
 )
 from appointment.views import AppointmentCreateView, AppointmentDetailView, AppointmentListView, PatientSearchView
 
@@ -16,4 +17,6 @@ urlpatterns = [
     path("<int:pk>/", AppointmentDetailView.as_view(), name="appointment-detail"),
     path("<int:pk>/reschedule/", AppointmentRescheduleView.as_view(), name="appointment-reschedule"),
     path('patients/search/', PatientSearchView.as_view(), name='patient-search'),
+    path('<int:pk>/cancel/',     AppointmentCancelView.as_view(), name='appointment-cancel'),
+    
 ]
