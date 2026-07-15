@@ -1,6 +1,6 @@
-<<<<<<< HEAD
 from datetime import date, datetime, time, timedelta
 
+from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -277,12 +277,6 @@ class DoctorAvailabilityCrossSeatValidationTests(APITestCase):
 
         # Different weekday never conflicts
         different_day.clean()
-=======
-from django.contrib.auth import get_user_model
-from rest_framework import status
-from rest_framework.test import APITestCase
-
-from headquarters.models import Headquarters
 
 User = get_user_model()
 
@@ -377,4 +371,3 @@ class HeadquartersAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
->>>>>>> origin/main

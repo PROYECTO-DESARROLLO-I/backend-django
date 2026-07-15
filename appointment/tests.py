@@ -312,11 +312,8 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):
-<<<<<<< HEAD
         # Patient belongs to self.eps but limit is set on a different EPS — should be ignored.
         eps2 = EPS.objects.create(name="EPS Solo", code="EPS002", active=True)
-=======
->>>>>>> origin/main
         EPSAppointmentLimit.objects.create(
             eps=eps2,
             specialty=self.specialty,
@@ -351,15 +348,12 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
             status=Appointment.Status.CONFIRMED,
             created_by=other_user,
         )
-<<<<<<< HEAD
-=======
         
         # En vez de asignar None (que viola el NOT NULL de la Base de Datos), 
         # le creamos una EPS alternativa sin límites asociados para saltar la validación.
         particular_eps = EPS.objects.create(name="Particular / Sin EPS", code="PART01", active=True)
         self.patient.eps = particular_eps
         self.patient.save()
->>>>>>> origin/main
 
         # self.patient belongs to self.eps which has no limit — booking must succeed
         response = self.client.post(self.url, self.booking_payload(), format="json")
@@ -452,14 +446,11 @@ class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
         other_patient = Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
-<<<<<<< HEAD
             document_type=Patient.DocumentType.CC,
             date_birth=date(1990, 1, 1),
             phone_number="+573001234569",
             address="Calle 1 # 2-3",
-=======
             date_birth="1992-08-20",
->>>>>>> origin/main
             eps=self.eps,
         )
         Appointment.objects.create(
@@ -548,14 +539,11 @@ class AppointmentDetailTests(AppointmentBookingSetupMixin, APITestCase):
         Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
-<<<<<<< HEAD
             document_type=Patient.DocumentType.CC,
             date_birth=date(1990, 1, 1),
             phone_number="+573001234570",
             address="Calle 1 # 2-3",
-=======
             date_birth="1994-11-05",
->>>>>>> origin/main
             eps=self.eps,
         )
         self.client.force_authenticate(user=patient_user2)
