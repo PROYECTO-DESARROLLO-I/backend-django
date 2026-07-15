@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from django.db import transaction
 from django.utils import timezone
@@ -22,8 +23,11 @@ from notifications.services import send_appointment_confirmation
 from patient.models import Patient
 from patient.serializers import PatientListSerializer
 from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
-from rules.services import period_bounds as _period_bounds
+from rules.services import create_limit_alert_notifications, period_bounds as _period_bounds
 from specialties.models import Specialty
+
+logger = logging.getLogger(__name__)
+
 
 def _get_patient(user):
     try:
@@ -99,6 +103,12 @@ class AppointmentCreateView(APIView):
                 EPSBudget.objects.filter(pk=budget.pk).update(used_budget=F("used_budget") + 1)
 
         send_appointment_confirmation(appointment)
+
+        try:
+            # Best-effort: alerting the superadmin should never break the booking flow.
+            create_limit_alert_notifications(appointment)
+        except Exception:
+            logger.exception("Error creando alertas de tope para la cita %s", appointment.pk)
 
         return Response(
             AppointmentDetailSerializer(appointment).data,

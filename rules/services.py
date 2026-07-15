@@ -72,6 +72,77 @@ def get_eps_limit_alerts(threshold=DEFAULT_ALERT_THRESHOLD):
     return alerts
 
 
+def create_limit_alert_notifications(appointment):
+    """Notifies every active superadmin when booking `appointment` pushes one of its
+    EPS's active appointment limits to >= DEFAULT_ALERT_THRESHOLD usage.
+
+    Dedup criteria: `Notification.limit` stores exactly which EPSAppointmentLimit
+    triggered the alert, so two overlapping active limits for the same EPS (e.g. a
+    general monthly limit with specialty=None and a specialty-specific weekly limit)
+    each get their own, independent alert instead of one suppressing the other. We
+    consider an alert already raised for a given superadmin when there is already a
+    LIMIT_ALERT notification for that same user + limit whose appointment falls within
+    the *same period window* of that limit (so a new period — e.g. the following month
+    — still triggers a fresh alert once the threshold is crossed again).
+    """
+    from django.contrib.auth import get_user_model
+
+    from appointment.models import Appointment
+    from notifications.models import Notification
+
+    patient = appointment.patient
+    eps = patient.eps
+    if not eps:
+        return
+
+    User = get_user_model()
+    superadmins = list(User.objects.filter(rol=User.Role.SUPERADMIN, is_active=True))
+    if not superadmins:
+        return
+
+    limits = EPSAppointmentLimit.objects.filter(
+        Q(specialty=appointment.specialty) | Q(specialty__isnull=True),
+        eps=eps,
+        active=True,
+    )
+
+    for limit in limits:
+        period_start, period_end = period_bounds(appointment.scheduled_at, limit.period)
+        appointments_qs = Appointment.objects.filter(
+            patient__eps=eps,
+            status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
+            scheduled_at__date__gte=period_start,
+            scheduled_at__date__lte=period_end,
+        )
+        if limit.specialty_id is not None:
+            appointments_qs = appointments_qs.filter(specialty=limit.specialty)
+        used = appointments_qs.count()
+
+        usage_ratio = used / limit.max_appointments if limit.max_appointments else 1.0
+        if usage_ratio < DEFAULT_ALERT_THRESHOLD:
+            continue
+
+        for admin_user in superadmins:
+            duplicate_exists = Notification.objects.filter(
+                type=Notification.Type.LIMIT_ALERT,
+                user=admin_user,
+                limit=limit,
+                appointment__scheduled_at__date__gte=period_start,
+                appointment__scheduled_at__date__lte=period_end,
+            ).exists()
+            if duplicate_exists:
+                continue
+
+            Notification.objects.create(
+                appointment=appointment,
+                user=admin_user,
+                limit=limit,
+                type=Notification.Type.LIMIT_ALERT,
+                channel="email",
+                status=Notification.Status.PENDING,
+            )
+
+
 def get_eps_budget_alerts(threshold=DEFAULT_ALERT_THRESHOLD):
     today = timezone.localdate()
     alerts = []

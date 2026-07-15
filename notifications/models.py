@@ -25,6 +25,18 @@ class Notification(models.Model):
         related_name="notifications",
         db_column="usuario_id",
     )
+    # Nullable: only set for LIMIT_ALERT notifications, to identify exactly which
+    # EPSAppointmentLimit triggered the alert (needed for correct deduplication when
+    # several active limits for the same EPS overlap in time). Additive field, does
+    # not change the existing DBML relations.
+    limit = models.ForeignKey(
+        "rules.EPSAppointmentLimit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notifications",
+        db_column="tope_id",
+    )
     type = models.CharField(max_length=20, choices=Type.choices, db_column="tipo")
     channel = models.CharField(max_length=30, default="email", db_column="canal")
     status = models.CharField(max_length=20, choices=Status.choices, db_column="estado")

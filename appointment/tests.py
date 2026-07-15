@@ -11,6 +11,7 @@ from availability.models import DoctorAvailability, ScheduleException
 from doctor.models import Doctor, DoctorSpecialty
 from eps.models import EPS
 from headquarters.models import Headquarters
+from notifications.models import Notification
 from patient.models import Patient
 from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
 from specialties.models import Specialty
@@ -433,6 +434,147 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("presupuestal", str(response.data))
+
+
+class LimitAlertNotificationTests(AppointmentBookingSetupMixin, APITestCase):
+    def setUp(self):
+        self.url = reverse("appointment-create")
+        self.build_scenario()
+        self.superadmin = User.objects.create_user(
+            email="superadmin@test.com",
+            password=self.password,
+            nombre="Super",
+            apellido="Admin",
+            rol=User.Role.SUPERADMIN,
+        )
+        self.limit = EPSAppointmentLimit.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period=Period.MONTHLY,
+            max_appointments=10,
+            active=True,
+        )
+        # Pre-fill 7 of the 10 slots directly (bypassing the API) so the next booking
+        # reaches the 80% alert threshold (8/10).
+        for hour in range(8, 15):
+            Appointment.objects.create(
+                patient=self.patient,
+                doctor=self.doctor,
+                specialty=self.specialty,
+                headquarters=self.headquarters,
+                scheduled_at=make_aware(self.test_date, time(hour, 0)),
+                duration_minutes=30,
+                status=Appointment.Status.CONFIRMED,
+                created_by=self.patient_user,
+            )
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_creates_limit_alert_notification_for_superadmin_at_80_percent(self, mock_email):
+        response = self.client.post(
+            self.url,
+            self.booking_payload(scheduled_at=make_aware(self.test_date, time(15, 0)).isoformat()),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        alerts = Notification.objects.filter(
+            type=Notification.Type.LIMIT_ALERT, user=self.superadmin
+        )
+        self.assertEqual(alerts.count(), 1)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_does_not_duplicate_alert_within_same_period(self, mock_email):
+        self.client.post(
+            self.url,
+            self.booking_payload(scheduled_at=make_aware(self.test_date, time(15, 0)).isoformat()),
+            format="json",
+        )
+        response = self.client.post(
+            self.url,
+            self.booking_payload(scheduled_at=make_aware(self.test_date, time(15, 30)).isoformat()),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        alerts = Notification.objects.filter(
+            type=Notification.Type.LIMIT_ALERT, user=self.superadmin
+        )
+        self.assertEqual(alerts.count(), 1)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_overlapping_active_limits_each_generate_their_own_alert(self, mock_email):
+        # A second, general (specialty=None) weekly limit overlapping with the existing
+        # specialty-specific monthly limit: both are active for the same EPS and both
+        # should reach >= 80% usage with the same booking, so both must alert
+        # independently (the general limit's alert must not be suppressed by the
+        # specific one's, or vice versa).
+        general_weekly_limit = EPSAppointmentLimit.objects.create(
+            eps=self.eps,
+            specialty=None,
+            period=Period.WEEKLY,
+            max_appointments=10,
+            active=True,
+        )
+
+        response = self.client.post(
+            self.url,
+            self.booking_payload(scheduled_at=make_aware(self.test_date, time(15, 0)).isoformat()),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        alerts = Notification.objects.filter(type=Notification.Type.LIMIT_ALERT, user=self.superadmin)
+        self.assertEqual(alerts.count(), 2)
+        alerted_limit_ids = set(alerts.values_list("limit_id", flat=True))
+        self.assertEqual(alerted_limit_ids, {self.limit.id, general_weekly_limit.id})
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_next_period_generates_a_new_alert(self, mock_email):
+        # Trigger the alert for the current month first.
+        self.client.post(
+            self.url,
+            self.booking_payload(scheduled_at=make_aware(self.test_date, time(15, 0)).isoformat()),
+            format="json",
+        )
+        self.assertEqual(
+            Notification.objects.filter(
+                type=Notification.Type.LIMIT_ALERT, user=self.superadmin, limit=self.limit
+            ).count(),
+            1,
+        )
+
+        next_month_date = self.test_date.replace(day=1)
+        if next_month_date.month == 12:
+            next_month_date = next_month_date.replace(year=next_month_date.year + 1, month=1, day=5)
+        else:
+            next_month_date = next_month_date.replace(month=next_month_date.month + 1, day=5)
+
+        # Pre-fill 7 of the 10 slots for next month directly, then book the 8th via the
+        # API so that period's usage also crosses the 80% threshold.
+        for hour in range(8, 15):
+            Appointment.objects.create(
+                patient=self.patient,
+                doctor=self.doctor,
+                specialty=self.specialty,
+                headquarters=self.headquarters,
+                scheduled_at=make_aware(next_month_date, time(hour, 0)),
+                duration_minutes=30,
+                status=Appointment.Status.CONFIRMED,
+                created_by=self.patient_user,
+            )
+        response = self.client.post(
+            self.url,
+            self.booking_payload(scheduled_at=make_aware(next_month_date, time(15, 0)).isoformat()),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            Notification.objects.filter(
+                type=Notification.Type.LIMIT_ALERT, user=self.superadmin, limit=self.limit
+            ).count(),
+            2,
+        )
 
 
 class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
