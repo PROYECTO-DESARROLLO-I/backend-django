@@ -3,3 +3,6 @@
 .env.production
 db.sqlite3
 .venv/
+reporte.pdf
+./reporte.pdf
+
