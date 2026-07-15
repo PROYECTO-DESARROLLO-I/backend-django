@@ -10,7 +10,8 @@ from eps.models import EPS
 from user.serializers import UserResponseSerializer, UserSignupSerializer
 
 from .models import Patient
-
+from headquarters.models import Headquarters
+from django.db.models import Count
 User = get_user_model()
 
 
@@ -53,7 +54,19 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
             apellido=user_data["apellido"],
             rol=User.Role.PATIENT,
         )
-        patient = Patient.objects.create(user=user, **validated_data)
+
+        # 2. ALGORITMO: Buscar la sede con menos pacientes asignados (sólo sedes activas)
+        # .annotate crea un campo temporal 'num_pacientes' contando las relaciones de la tabla pacientes.
+        # .order_by lo organiza de menor a mayor.
+        # .first() toma la sede con el número más bajo. Si no hay sedes en la BD, devuelve None.
+        sede_automatica = Headquarters.objects.filter(active=True).annotate(
+            num_pacientes=Count("pacientes")
+        ).order_by("num_pacientes").first()
+
+        patient = Patient.objects.create(user=user, 
+                                        sede=sede_automatica,
+                                         **validated_data 
+                                         )
         return patient
 
     def to_representation(self, instance: Patient) -> dict:
@@ -65,8 +78,37 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
             "date_birth": instance.date_birth,
             "phone_number": instance.phone_number,
             "address": instance.address,
+            "sede": {
+                "id": instance.sede_id,
+                "name": instance.sede.name if instance.sede else None,
+            },
             "eps": {
                 "id": instance.eps_id,
                 "name": instance.eps.get_name_display() if instance.eps else None,
             },
         }
+
+
+
+class PatientListSerializer(serializers.ModelSerializer):
+    user = UserResponseSerializer(read_only=True) 
+    eps = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Patient
+        fields = [
+            "id", 
+            "identity_document", 
+            "document_type", 
+            "phone_number",
+            "user",
+            "eps"
+        ]
+
+    def get_eps(self, instance):
+        if instance.eps:
+            return {
+                "id": instance.eps.id,
+                "name": instance.eps.name  
+            }
+        return None

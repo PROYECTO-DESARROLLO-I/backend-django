@@ -3,10 +3,15 @@ from .base import *
 
 DEBUG = True 
 
+<<<<<<< HEAD
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     *MIDDLEWARE,
 ]
+=======
+# `corsheaders` is already added in base settings. Avoid re-adding
+# it here to prevent duplicate application labels error.
+>>>>>>> origin/main
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",

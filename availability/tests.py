@@ -36,6 +36,7 @@ class AvailableSlotsTests(APITestCase):
             phone_number="+573001234567",
             address="Calle 1 # 2-3",
             eps=eps,
+            date_birth="2000-01-01",
         )
 
         doctor_user = User.objects.create_user(

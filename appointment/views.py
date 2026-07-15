@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -23,6 +23,13 @@ from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, P
 from specialties.models import Specialty
 
 
+from django.contrib.auth import get_user_model
+from rest_framework.generics import ListAPIView
+from rest_framework.permissions import IsAuthenticated
+
+from patient.models import Patient
+from patient.serializers import PatientListSerializer
+
 def _get_patient(user):
     try:
         return user.patient_profile
@@ -34,7 +41,25 @@ class AppointmentCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        patient = _get_patient(request.user)
+
+
+        # --- CAMBIO PRINCIPAL PARA ADMITIR ADMINISTRATIVOS ---
+        if request.user.rol == "administrativo":
+            # El administrativo debe enviar el ID del paciente desde el frontend
+            patient_id = request.data.get("patient_id")
+            if not patient_id:
+                raise ValidationError({"patient_id": "Debe proporcionar el ID del paciente para agendar la cita."})
+            try:
+                patient = Patient.objects.get(pk=patient_id)
+            except Patient.DoesNotExist:
+                raise ValidationError({"patient_id": "El paciente seleccionado no existe."})
+        else:
+            # Si es un paciente normal, se obtiene automáticamente de su perfil
+            patient = _get_patient(request.user)
+        # -----------------------------------------------------
+
+
+        
         serializer = AppointmentCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -140,7 +165,7 @@ class AppointmentCreateView(APIView):
             appt_end = appt.scheduled_at + timedelta(minutes=appt.duration_minutes)
             if appt_end > slot_start:
                 raise ValidationError(
-                    {"scheduled_at": "Ya tienes una cita agendada en ese horario."}
+                    {"scheduled_at": "El paciente ya tiene una cita agendada en ese horario."}
                 )
 
     def _check_frequency_restriction(self, patient, specialty, scheduled_at):
@@ -259,3 +284,40 @@ def _period_bounds(scheduled_at, period):
         else:
             last = first.replace(month=first.month + 1) - _td(days=1)
         return first, last
+
+
+# ==========================================
+#          BUSQUEDA PACIENTE
+# ==========================================
+
+class PatientSearchPermission(IsAuthenticated):
+    def has_permission(self, request, view):
+        # 1. Validamos primero si está autenticado usando el comportamiento directo
+        is_authenticated = request.user and request.user.is_authenticated
+        if not is_authenticated:
+            return False
+            
+        # 2. Comparamos directamente contra el string de tu base de datos
+        return request.user.rol == "administrativo"
+
+
+class PatientSearchView(ListAPIView):
+    permission_classes = [PatientSearchPermission]
+    serializer_class = PatientListSerializer
+
+    def get_queryset(self):
+        query = self.request.query_params.get('q', '').strip()
+        if not query:
+            return Patient.objects.none()
+
+        # Filtramos pacientes con cuentas activas
+        queryset = Patient.objects.filter(user__is_active=True)
+        
+        # Filtros de coincidencia por texto o documento
+        queryset = queryset.filter(
+            Q(user__nombre__icontains=query) |
+            Q(user__apellido__icontains=query) |
+            Q(identity_document__icontains=query) |
+            Q(user__email__icontains=query)
+        )
+        return queryset.select_related('user', 'eps')
