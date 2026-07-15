@@ -33,6 +33,31 @@ def send_doctor_welcome(doctor):
         pass
 
 
+def send_password_reset_link(user, reset_url):
+    subject = "Recuperación de contraseña — Salud AgendaX"
+    message = (
+        f"Hola {user.nombre},\n\n"
+        f"Recibimos una solicitud para restablecer la contraseña de tu cuenta en Salud AgendaX.\n\n"
+        f"Para continuar, ingresa al siguiente enlace:\n\n"
+        f"  {reset_url}\n\n"
+        f"Este enlace expira en 15 minutos.\n\n"
+        f"Si no solicitaste este cambio, puedes ignorar este mensaje.\n\n"
+        f"Salud AgendaX"
+    )
+
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+    except Exception:
+        # El envío no debe romper el flujo si el correo no se puede enviar
+        pass
+
+
 def send_appointment_confirmation(appointment):
     patient_user = appointment.patient.user
     doctor = appointment.doctor
@@ -59,6 +84,54 @@ def send_appointment_confirmation(appointment):
         appointment=appointment,
         user=patient_user,
         type=Notification.Type.CONFIRMATION,
+        channel="email",
+        status=Notification.Status.PENDING,
+    )
+
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[patient_user.email],
+            fail_silently=False,
+        )
+        notification.status = Notification.Status.SENT
+        notification.sent_at = timezone.now()
+    except Exception:
+        notification.status = Notification.Status.FAILED
+    finally:
+        notification.save(update_fields=["status", "sent_at"])
+
+
+def send_appointment_rescheduled(appointment, previous_scheduled_at):
+    patient_user = appointment.patient.user
+    doctor = appointment.doctor
+    previous_local = timezone.localtime(previous_scheduled_at)
+    new_local = timezone.localtime(appointment.scheduled_at)
+
+    subject = f"Reprogramación de cita médica — {appointment.specialty.name}"
+    message = (
+        f"Hola {patient_user.nombre},\n\n"
+        f"Tu cita ha sido reprogramada con los siguientes detalles:\n\n"
+        f"  Especialidad      : {appointment.specialty.name}\n"
+        f"  Médico            : Dr(a). {doctor.user.nombre} {doctor.user.apellido}\n"
+        f"  Fecha anterior    : {previous_local.strftime('%d/%m/%Y %H:%M')}\n"
+        f"  Nueva fecha y hora: {new_local.strftime('%d/%m/%Y %H:%M')}\n"
+        f"  Duración          : {appointment.duration_minutes} minutos\n"
+    )
+    if appointment.headquarters:
+        message += f"  Sede              : {appointment.headquarters.name}\n"
+    message += (
+        f"\nNúmero de cita: #{appointment.pk}\n\n"
+        f"Si tienes dudas sobre este cambio, comunícate con nosotros.\n\n"
+        f"Salud AgendaX"
+    )
+
+    notification = Notification.objects.create(
+        appointment=appointment,
+        user=patient_user,
+        type=Notification.Type.RESCHEDULED,
         channel="email",
         status=Notification.Status.PENDING,
     )

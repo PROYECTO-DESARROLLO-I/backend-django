@@ -31,6 +31,10 @@ class AvailableSlotsTests(APITestCase):
         self.patient = Patient.objects.create(
             user=patient_user,
             identity_document="123456789",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
             eps=eps,
         )
 
@@ -238,12 +242,195 @@ class AvailableSlotsTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_slot_response_includes_new_hq14_fields(self):
+        response = self.client.get(self.url, {
+            "doctor": self.doctor.id,
+            "specialty": self.specialty.id,
+            "date": self.test_date.isoformat(),
+        })
+
+        slot = response.data["slots"][0]
+        self.assertIn("doctor_id", slot)
+        self.assertIn("doctor_name", slot)
+        self.assertIn("headquarters_address", slot)
+        self.assertIn("consulting_room", slot)
+
     def test_requires_authentication(self):
         self.client.force_authenticate(user=None)
 
         response = self.client.get(self.url, {
             "doctor": self.doctor.id,
             "specialty": self.specialty.id,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class AvailableSlotsByHeadquartersTests(APITestCase):
+    """HU14: slots filtered by specialty + headquarters."""
+
+    password = "ClaveSegura123*"
+
+    def setUp(self):
+        self.url = reverse("availability-slots")
+
+        patient_user = User.objects.create_user(
+            email="paciente@test.com",
+            password=self.password,
+            nombre="Maria",
+            apellido="Lopez",
+            rol=User.Role.PATIENT,
+        )
+        eps = EPS.objects.create(name="EPS Test", code="EPS001", active=True)
+        Patient.objects.create(
+            user=patient_user,
+            identity_document="123456789",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
+            eps=eps,
+        )
+
+        self.specialty = Specialty.objects.create(name="Medicina General", active=True)
+        self.hq = Headquarters.objects.create(
+            name="Sede Norte", address="Calle 100 # 15-20", active=True
+        )
+
+        doctor_user = User.objects.create_user(
+            email="medico@test.com",
+            password=self.password,
+            nombre="Carlos",
+            apellido="Perez",
+            rol=User.Role.DOCTOR,
+        )
+        self.doctor = Doctor.objects.create(
+            user=doctor_user, identity_document="987654321", active=True
+        )
+        DoctorSpecialty.objects.create(doctor=self.doctor, specialty=self.specialty)
+
+        for weekday in range(7):
+            DoctorAvailability.objects.create(
+                doctor=self.doctor,
+                specialty=self.specialty,
+                headquarters=self.hq,
+                weekday=weekday,
+                start_time=time(8, 0),
+                end_time=time(10, 0),
+                appointment_duration=30,
+                consulting_room="Consultorio 3",
+                active=True,
+            )
+
+        self.test_date = date.today() + timedelta(days=2)
+        self.client.force_authenticate(user=patient_user)
+
+    def test_returns_slots_for_specialty_and_headquarters(self):
+        response = self.client.get(self.url, {
+            "specialty": self.specialty.id,
+            "headquarters": self.hq.id,
+            "date_from": self.test_date.isoformat(),
+            "date_to": (self.test_date + timedelta(days=1)).isoformat(),
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("slots", response.data)
+        self.assertGreater(len(response.data["slots"]), 0)
+
+    def test_response_includes_headquarters_address_and_consulting_room(self):
+        response = self.client.get(self.url, {
+            "specialty": self.specialty.id,
+            "headquarters": self.hq.id,
+            "date_from": self.test_date.isoformat(),
+            "date_to": self.test_date.isoformat(),
+        })
+
+        slot = response.data["slots"][0]
+        self.assertEqual(slot["headquarters_address"], "Calle 100 # 15-20")
+        self.assertEqual(slot["consulting_room"], "Consultorio 3")
+        self.assertEqual(slot["headquarters_name"], "Sede Norte")
+
+    def test_response_includes_doctor_info_per_slot(self):
+        response = self.client.get(self.url, {
+            "specialty": self.specialty.id,
+            "headquarters": self.hq.id,
+            "date_from": self.test_date.isoformat(),
+            "date_to": self.test_date.isoformat(),
+        })
+
+        slot = response.data["slots"][0]
+        self.assertIsNotNone(slot["doctor_id"])
+        self.assertIn("Carlos", slot["doctor_name"])
+
+    def test_aggregates_slots_from_multiple_doctors_in_same_sede(self):
+        doctor_user2 = User.objects.create_user(
+            email="medico2@test.com",
+            password=self.password,
+            nombre="Ana",
+            apellido="Rios",
+            rol=User.Role.DOCTOR,
+        )
+        doctor2 = Doctor.objects.create(
+            user=doctor_user2, identity_document="111222333", active=True
+        )
+        DoctorSpecialty.objects.create(doctor=doctor2, specialty=self.specialty)
+        for weekday in range(7):
+            DoctorAvailability.objects.create(
+                doctor=doctor2,
+                specialty=self.specialty,
+                headquarters=self.hq,
+                weekday=weekday,
+                start_time=time(8, 0),
+                end_time=time(10, 0),
+                appointment_duration=30,
+                active=True,
+            )
+
+        response = self.client.get(self.url, {
+            "specialty": self.specialty.id,
+            "headquarters": self.hq.id,
+            "date_from": self.test_date.isoformat(),
+            "date_to": self.test_date.isoformat(),
+        })
+
+        doctor_ids = {s["doctor_id"] for s in response.data["slots"]}
+        self.assertIn(self.doctor.id, doctor_ids)
+        self.assertIn(doctor2.id, doctor_ids)
+
+    def test_date_range_limits_slots_returned(self):
+        single_day = self.test_date
+        response = self.client.get(self.url, {
+            "specialty": self.specialty.id,
+            "headquarters": self.hq.id,
+            "date_from": single_day.isoformat(),
+            "date_to": single_day.isoformat(),
+        })
+
+        dates = {s["date"] for s in response.data["slots"]}
+        self.assertEqual(len(dates), 1)
+        self.assertIn(single_day.isoformat(), dates)
+
+    def test_returns_400_when_date_to_is_before_date_from(self):
+        response = self.client.get(self.url, {
+            "specialty": self.specialty.id,
+            "headquarters": self.hq.id,
+            "date_from": self.test_date.isoformat(),
+            "date_to": (self.test_date - timedelta(days=1)).isoformat(),
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_returns_400_when_only_specialty_provided(self):
+        response = self.client.get(self.url, {"specialty": self.specialty.id})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get(self.url, {
+            "specialty": self.specialty.id,
+            "headquarters": self.hq.id,
         })
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

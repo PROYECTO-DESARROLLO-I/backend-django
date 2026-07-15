@@ -34,7 +34,12 @@ class EPSAppointmentLimit(models.Model):
             models.CheckConstraint(
                 condition=models.Q(max_appointments__gt=0),
                 name="eps_appointment_limit_positive_max",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["eps", "specialty", "period"],
+                condition=models.Q(active=True),
+                name="unique_active_eps_limit",
+            ),
         ]
 
     def __str__(self):

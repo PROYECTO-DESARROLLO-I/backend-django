@@ -1,0 +1,417 @@
+{
+  "info": {
+    "_postman_id": "8f2d6c1a-0000-4000-8000-000000000001",
+    "name": "SaludAgendaX - API completa",
+    "description": "Colección completa de la API de SaludAgendaX (backend Django/DRF).\n\nOrganizada por módulo/app. Cada request incluye en su campo \"description\" el rol requerido, las reglas de negocio que aplica el backend y el significado de los campos del body.\n\n### Cómo usar\n1. Ejecuta \"Auth > Login (paciente)\" o \"Auth > Login (médico)\" según el flujo que quieras probar. El test script de esos requests guarda el access token en la variable de colección `{{token}}` automáticamente.\n2. Todas las demás requests usan `Authorization: Bearer {{token}}` salvo las marcadas explícitamente como públicas (registro, login).\n3. Cambia `{{base_url}}` si no corres el backend en `http://127.0.0.1:8000`.\n\n### Roles del sistema (User.rol)\n- `paciente`: agenda/consulta sus propias citas.\n- `medico`: consulta y reprograma sus propias citas (HU17).\n- `administrativo` / `superadmin`: gestiona médicos y sedes.\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "55892879"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "refresh_token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Login, sesión y registro. Todas las rutas viven bajo /api/auth/. El login es público; el resto de acciones de cuenta requieren el token emitido en el login.",
+      "item": [
+        {
+          "name": "Login (paciente o médico)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"paciente@test.com\",\n  \"password\": \"ClaveSegura123*\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login", ""]
+            },
+            "description": "POST /api/auth/login/ — Público (AllowAny).\n\nAutentica por email/password y devuelve tokens JWT (access + refresh). Sirve tanto para pacientes como para médicos o personal administrativo: el rol viene en `user.rol` de la respuesta.\n\nReglas de negocio (user/views.py LoginView):\n- Bloqueo temporal tras `AUTH_MAX_FAILED_LOGIN_ATTEMPTS` intentos fallidos (default 5), por `AUTH_LOGIN_LOCKOUT_MINUTES` minutos (default 15). Devuelve 423 con `retry_after_seconds` mientras está bloqueada.\n- 401 con mensaje genérico \"Credenciales inválidas\" si el email no existe o el password no coincide (no revela cuál de los dos falló).\n- 403 si el usuario existe pero `is_active=False`.\n\nRespuesta 200 incluye: `access`, `refresh`, `token_type`, `expires_in`, `expires_at`, `refresh_expires_in`, `refresh_expires_at`, `user` (id, email, nombre, apellido, rol).\n\nEl test script guarda `access` en la variable de colección `token` para reutilizarlo en las demás requests."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('token', body.access);",
+                  "    pm.collectionVariables.set('refresh_token', body.refresh);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Refrescar access token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{refresh_token}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/auth/token/refresh/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "auth", "token", "refresh", ""]
+            },
+            "description": "POST /api/auth/auth/token/refresh/ — Público.\n\nEndpoint estándar de simplejwt (`TokenRefreshView`). Recibe el `refresh` token y devuelve un nuevo `access` token cuando el anterior expira."
+          },
+          "response": []
+        },
+        {
+          "name": "Verificar token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/auth/token/verify/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "auth", "token", "verify", ""]
+            },
+            "description": "POST /api/auth/auth/token/verify/ — Público.\n\nEndpoint estándar de simplejwt (`TokenVerifyView`). Devuelve 200 si el token es válido y no ha expirado, 401 en caso contrario."
+          },
+          "response": []
+        },
+        {
+          "name": "Mi perfil (me)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/auth/auth/me/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "auth", "me", ""]
+            },
+            "description": "GET /api/auth/auth/me/ — Requiere autenticación (cualquier rol).\n\nDevuelve los datos del usuario autenticado según el token JWT enviado (`build_authenticated_user_payload`)."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{refresh_token}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/auth/logout/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "auth", "logout", ""]
+            },
+            "description": "POST /api/auth/auth/logout/ — Requiere autenticación.\n\nInvalida (blacklist) el refresh token enviado para cerrar la sesión. Devuelve 400 si el refresh token es inválido o no pertenece al usuario autenticado."
+          },
+          "response": []
+        },
+        {
+          "name": "Registro paciente (vía /api/auth/register/)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Andrés\",\n  \"apellido\": \"Mendoza\",\n  \"email\": \"paciente.prueba@gmail.com\",\n  \"password\": \"PasswordSegura123*\",\n  \"identity_document\": \"1098765432\",\n  \"document_type\": \"CC\",\n  \"date_birth\": \"1996-03-20\",\n  \"phone_number\": \"+573104567890\",\n  \"address\": \"Avenida Siempre Viva 123\",\n  \"eps\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register", ""]
+            },
+            "description": "POST /api/auth/register/ — Público.\n\nRegistro alterno de pacientes (`PatientRegisterSerializer`), crea User (rol=paciente) y Patient en una transacción atómica. `eps` es opcional (PK de una EPS activa). Valida email y `identity_document` únicos. No devuelve el objeto creado, solo un mensaje de éxito (201)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Pacientes",
+      "description": "Registro de pacientes vía la app `patient`. Existe también un registro alterno en Auth > \"Registro paciente (vía /api/auth/register/)\" con reglas ligeramente distintas (asigna sede automáticamente por menor carga).",
+      "item": [
+        {
+          "name": "Registro paciente",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user\": {\n    \"email\": \"paciente.prueba@gmail.com\",\n    \"password\": \"PasswordSegura123*\",\n    \"nombre\": \"Andrés\",\n    \"apellido\": \"Mendoza\"\n  },\n  \"document_type\": \"CC\",\n  \"identity_document\": \"1098765432\",\n  \"date_birth\": \"1996-03-20\",\n  \"phone_number\": \"+573104567890\",\n  \"address\": \"Avenida Siempre Viva 123\",\n  \"eps\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/patients/register/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "patients", "register", ""]
+            },
+            "description": "POST /api/patients/register/ — Público (AllowAny).\n\nRegistro de paciente vía `PatientRegistrationSerializer` (patient/serializers.py). Crea User (rol=paciente) y Patient de forma atómica. Asigna automáticamente la sede (`sede`) activa con menos pacientes registrados. `eps` es requerido (PK de una EPS activa). Devuelve el paciente creado con `user`, `sede` y `eps` denormalizados."
+          },
+          "response": [
+            {
+              "name": "Registro paciente",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user\": {\n    \"email\": \"paciente.prueba@gmail.com\",\n    \"password\": \"PasswordSegura123*\",\n    \"nombre\": \"Andrés\",\n    \"apellido\": \"Mendoza\"\n  },\n  \"document_type\": \"CC\",\n  \"identity_document\": \"1098765432\",\n  \"date_birth\": \"1996-03-20\",\n  \"phone_number\": \"+573104567890\",\n  \"address\": \"Avenida Siempre Viva 123\",\n  \"eps\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/patients/register/",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "patients", "register", ""]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [],
+              "cookie": [],
+              "body": "{\n    \"id\": 1,\n    \"user\": {\n        \"id\": 2,\n        \"email\": \"paciente.prueba@gmail.com\",\n        \"nombre\": \"Andrés\",\n        \"apellido\": \"Mendoza\",\n        \"rol\": \"paciente\"\n    },\n    \"identity_document\": \"1098765432\",\n    \"document_type\": \"CC\",\n    \"date_birth\": \"1996-03-20\",\n    \"phone_number\": \"+573104567890\",\n    \"address\": \"Avenida Siempre Viva 123\",\n    \"sede\": { \"id\": 1, \"name\": \"Sede Central\" },\n    \"eps\": { \"id\": 1, \"name\": \"Sura\" }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Médicos",
+      "description": "Consulta pública (para usuarios autenticados) de médicos por especialidad, y alta de médicos por personal administrativo.",
+      "item": [
+        {
+          "name": "Listar médicos disponibles por especialidad",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/doctors/?specialty=1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "doctors", ""],
+              "query": [{ "key": "specialty", "value": "1" }]
+            },
+            "description": "GET /api/doctors/?specialty=<id> — Requiere autenticación (cualquier rol).\n\nLista médicos activos de la especialidad dada que tengan al menos una fecha disponible en los próximos 30 días (excluye `ScheduleException`). Cada médico incluye `next_available_date`. El parámetro `specialty` es obligatorio (400 si falta)."
+          },
+          "response": []
+        },
+        {
+          "name": "Crear médico (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Carlos\",\n  \"apellido\": \"Perez\",\n  \"email\": \"medico@test.com\",\n  \"password\": \"ClaveSegura123*\",\n  \"identity_document\": \"987654321\",\n  \"register_number\": \"RM-0001\",\n  \"phone_number\": \"+573001234567\",\n  \"academic_information\": \"Especialista en Medicina General\",\n  \"specialty_ids\": [1]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/doctors/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "doctors", ""]
+            },
+            "description": "POST /api/doctors/ — Requiere rol `administrativo` o `superadmin` (`IsAdministrative`).\n\nCrea el User (rol=medico) y el Doctor asociado, junto con sus especialidades (`specialty_ids`, al menos una, todas deben existir y estar activas). Valida email, `identity_document` y `register_number` únicos. Envía un correo de bienvenida (`send_doctor_welcome`, no bloqueante: si falla el envío no revierte la creación)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Especialidades",
+      "item": [
+        {
+          "name": "Listar especialidades disponibles",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/specialties/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "specialties", ""]
+            },
+            "description": "GET /api/specialties/ — Requiere autenticación (cualquier rol).\n\nLista especialidades activas que tengan al menos un médico con disponibilidad vigente en los próximos 31 días. Incluye `available_doctors_count`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Sedes (Headquarters)",
+      "item": [
+        {
+          "name": "Listar sedes activas",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/headquarters/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "headquarters", ""]
+            },
+            "description": "GET /api/headquarters/ — Requiere rol `administrativo` o `superadmin` (`IsAdministrativeUser`).\n\nLista las sedes activas (`id`, `name`, `address`, `phone`, `active`)."
+          },
+          "response": []
+        },
+        {
+          "name": "Crear sede (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sede Norte\",\n  \"address\": \"Calle 100 # 20-30\",\n  \"phone\": \"+5716001234\",\n  \"active\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/headquarters/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "headquarters", ""]
+            },
+            "description": "POST /api/headquarters/ — Requiere rol `administrativo` o `superadmin` (`IsAdministrativeUser`).\n\nCrea una nueva sede. Responde con `{ message, data }` en 201, o los errores del serializer en 400."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Disponibilidad",
+      "item": [
+        {
+          "name": "Consultar slots disponibles",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/availability/slots/?doctor=1&specialty=1&date=2026-07-10&view=week",
+              "host": ["{{base_url}}"],
+              "path": ["api", "availability", "slots", ""],
+              "query": [
+                { "key": "doctor", "value": "1" },
+                { "key": "specialty", "value": "1" },
+                { "key": "date", "value": "2026-07-10" },
+                { "key": "view", "value": "week", "description": "week (7 días, default) o month (30 días)" }
+              ]
+            },
+            "description": "GET /api/availability/slots/?doctor=<id>&specialty=<id>&date=YYYY-MM-DD&view=week|month — Requiere autenticación.\n\nCalcula y devuelve los slots libres de un médico+especialidad en el rango pedido, a partir de `DoctorAvailability` menos: `ScheduleException` (días bloqueados), citas ya CONFIRMED/PENDING que se solapen, y horarios ya pasados. Cada slot trae `headquarters_id`/`headquarters_name`. `doctor` y `specialty` son obligatorios (400 si faltan)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Citas",
+      "description": "Flujo completo de citas: agendamiento por el paciente (HU06/HU14) y reprogramación por el médico (HU17).",
+      "item": [
+        {
+          "name": "Agendar cita (paciente)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doctor_id\": 1,\n  \"specialty_id\": 1,\n  \"scheduled_at\": \"2026-07-10T09:00:00\",\n  \"consultation_reason\": \"Control general\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/appointments/book/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "appointments", "book", ""]
+            },
+            "description": "POST /api/appointments/book/ — Requiere rol `paciente` (usuario debe tener `patient_profile`).\n\nCrea una cita en estado `confirmada`. Validaciones aplicadas en orden (todas dentro de una transacción con `select_for_update()` sobre el médico, para evitar doble reserva concurrente):\n1. `scheduled_at` debe coincidir con una `DoctorAvailability` activa del médico para esa especialidad y día de la semana, alineada a la duración del slot.\n2. El médico no debe tener una `ScheduleException` para esa fecha.\n3. El slot no debe solaparse con otra cita CONFIRMED/PENDING del mismo médico.\n4. El paciente no debe tener otra cita CONFIRMED/PENDING que se solape.\n5. Restricciones de frecuencia (`FrequencyRestriction`) por especialidad/periodo.\n6. Tope de citas de la EPS del paciente (`EPSAppointmentLimit`), si aplica.\n7. Presupuesto de la EPS (`EPSBudget`): si existe, se descuenta atómicamente al confirmar.\n\nLa sede (`headquarters`) de la cita se toma automáticamente de la `DoctorAvailability` encontrada, no se envía en el body. Al confirmar, se envía notificación de confirmación por correo (`send_appointment_confirmation`, registrada en `Notification`)."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar mis citas (paciente)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/appointments/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "appointments", ""]
+            },
+            "description": "GET /api/appointments/ — Requiere rol `paciente`.\n\nLista las citas del paciente autenticado, ordenadas por `-scheduled_at` (más reciente primero). Incluye `doctor_name`, `specialty_name`, `scheduled_at`, `duration_minutes`, `status`."
+          },
+          "response": []
+        },
+        {
+          "name": "Detalle de una cita (paciente)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/appointments/1/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "appointments", "1", ""]
+            },
+            "description": "GET /api/appointments/<id>/ — Requiere rol `paciente`, y que la cita pertenezca al paciente autenticado (si no, 400 \"Cita no encontrada\").\n\nDevuelve el detalle completo: nombres denormalizados de paciente/médico/especialidad/sede, `scheduled_at`, `duration_minutes`, `status`, `consultation_reason`, `notes`, `created_at`."
+          },
+          "response": []
+        },
+        {
+          "name": "Citas del médico (HU17)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/appointments/doctor/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "appointments", "doctor", ""]
+            },
+            "description": "GET /api/appointments/doctor/ — HU17. Requiere rol `medico` (`IsDoctor`: `request.user.rol == 'medico'` y debe existir `doctor_profile`).\n\nLista TODAS las citas (cualquier estado) del médico autenticado, ordenadas por `scheduled_at` ascendente, con `patient_name`, `specialty_name`, `scheduled_at`, `duration_minutes`, `status`. Un paciente que intente acceder recibe 403."
+          },
+          "response": []
+        },
+        {
+          "name": "Reprogramar cita (HU17 - médico)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scheduled_at\": \"2026-07-11T10:00:00\",\n  \"reason\": \"Ajuste de agenda del médico\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/appointments/1/reschedule/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "appointments", "1", "reschedule", ""]
+            },
+            "description": "POST /api/appointments/<id>/reschedule/ — HU17. Requiere rol `medico` (`IsDoctor`) y que la cita pertenezca al médico autenticado (si no, 403).\n\nBody: `scheduled_at` (nuevo horario, requerido), `reason` (motivo del cambio, opcional, se guarda en el historial).\n\nReglas de negocio:\n- Rechaza (400) si la cita ya está `cancelada` o `atendida`.\n- El nuevo `scheduled_at` se valida contra la disponibilidad del médico igual que al agendar (franja horaria válida, sin `ScheduleException`).\n- Verifica que el nuevo horario no choque con otra cita del médico ni con otra cita del paciente (excluyendo la propia cita que se reprograma).\n- Bloquea (`select_for_update`) tanto la fila del médico como la de la cita dentro de una transacción, para serializar reprogramaciones/creaciones concurrentes sobre el mismo médico.\n- Actualiza `scheduled_at`, `duration_minutes`, `headquarters` (según la nueva disponibilidad encontrada) y pone `status = reprogramada`.\n- Guarda un registro en `AppointmentHistory` (`previous_scheduled_at`, `new_scheduled_at`, `changed_by`, `reason`).\n- Envía notificación al paciente (`send_appointment_rescheduled`, tipo `Notification.Type.RESCHEDULED`).\n\nRespuesta 200: detalle de la cita actualizada (mismo formato que el detalle de cita)."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
