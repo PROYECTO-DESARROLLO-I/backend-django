@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -35,6 +36,7 @@ class DoctorAvailability(models.Model):
     start_time = models.TimeField(db_column="hora_inicio")
     end_time = models.TimeField(db_column="hora_fin")
     appointment_duration = models.PositiveIntegerField(db_column="duracion_cita")
+    consulting_room = models.CharField(max_length=50, blank=True, db_column="consultorio")
     active = models.BooleanField(default=True, db_column="activo")
 
     class Meta:
@@ -52,6 +54,23 @@ class DoctorAvailability(models.Model):
                 name="doctor_availability_positive_duration",
             ),
         ]
+
+    def clean(self):
+        # Prevent the same doctor from being in two different sedes during overlapping times on the same weekday
+        overlapping = DoctorAvailability.objects.filter(
+            doctor=self.doctor,
+            weekday=self.weekday,
+            active=True,
+            start_time__lt=self.end_time,
+            end_time__gt=self.start_time,
+        ).exclude(pk=self.pk)
+        for conflict in overlapping:
+            if conflict.headquarters_id != self.headquarters_id:
+                raise ValidationError(
+                    f"El médico ya tiene disponibilidad en otra sede ({conflict.headquarters}) "
+                    f"con horario que se superpone ({conflict.start_time}-{conflict.end_time}) "
+                    f"el mismo día."
+                )
 
     def __str__(self):
         return f"{self.doctor} - {self.get_weekday_display()} {self.start_time}-{self.end_time}"

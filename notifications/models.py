@@ -7,6 +7,7 @@ class Notification(models.Model):
         REMINDER = "recordatorio", "Recordatorio"
         CANCELLATION = "cancelacion", "Cancelación"
         LIMIT_ALERT = "alerta_tope", "Alerta de tope"
+        RESCHEDULED = "reprogramacion", "Reprogramación"
 
     class Status(models.TextChoices):
         PENDING = "pendiente", "Pendiente"

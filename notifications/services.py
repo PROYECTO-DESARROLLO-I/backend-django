@@ -102,3 +102,51 @@ def send_appointment_confirmation(appointment):
         notification.status = Notification.Status.FAILED
     finally:
         notification.save(update_fields=["status", "sent_at"])
+
+
+def send_appointment_rescheduled(appointment, previous_scheduled_at):
+    patient_user = appointment.patient.user
+    doctor = appointment.doctor
+    previous_local = timezone.localtime(previous_scheduled_at)
+    new_local = timezone.localtime(appointment.scheduled_at)
+
+    subject = f"Reprogramación de cita médica — {appointment.specialty.name}"
+    message = (
+        f"Hola {patient_user.nombre},\n\n"
+        f"Tu cita ha sido reprogramada con los siguientes detalles:\n\n"
+        f"  Especialidad      : {appointment.specialty.name}\n"
+        f"  Médico            : Dr(a). {doctor.user.nombre} {doctor.user.apellido}\n"
+        f"  Fecha anterior    : {previous_local.strftime('%d/%m/%Y %H:%M')}\n"
+        f"  Nueva fecha y hora: {new_local.strftime('%d/%m/%Y %H:%M')}\n"
+        f"  Duración          : {appointment.duration_minutes} minutos\n"
+    )
+    if appointment.headquarters:
+        message += f"  Sede              : {appointment.headquarters.name}\n"
+    message += (
+        f"\nNúmero de cita: #{appointment.pk}\n\n"
+        f"Si tienes dudas sobre este cambio, comunícate con nosotros.\n\n"
+        f"Salud AgendaX"
+    )
+
+    notification = Notification.objects.create(
+        appointment=appointment,
+        user=patient_user,
+        type=Notification.Type.RESCHEDULED,
+        channel="email",
+        status=Notification.Status.PENDING,
+    )
+
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[patient_user.email],
+            fail_silently=False,
+        )
+        notification.status = Notification.Status.SENT
+        notification.sent_at = timezone.now()
+    except Exception:
+        notification.status = Notification.Status.FAILED
+    finally:
+        notification.save(update_fields=["status", "sent_at"])

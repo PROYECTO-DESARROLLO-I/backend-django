@@ -63,3 +63,31 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"Cita {self.patient} con {self.doctor} - {self.scheduled_at}"
+
+
+class AppointmentHistory(models.Model):
+    appointment = models.ForeignKey(
+        Appointment,
+        on_delete=models.CASCADE,
+        related_name="history",
+        db_column="cita_id",
+    )
+    previous_scheduled_at = models.DateTimeField(db_column="fecha_hora_anterior")
+    new_scheduled_at = models.DateTimeField(db_column="fecha_hora_nueva")
+    changed_by = models.ForeignKey(
+        "user.User",
+        on_delete=models.PROTECT,
+        related_name="appointment_history_changes",
+        db_column="modificado_por",
+    )
+    reason = models.TextField(blank=True, db_column="motivo")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "historial_citas"
+        verbose_name = "historial de cita"
+        verbose_name_plural = "historial de citas"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Historial de cita {self.appointment_id} - {self.created_at}"

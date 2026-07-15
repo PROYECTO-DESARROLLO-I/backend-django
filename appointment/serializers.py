@@ -8,6 +8,7 @@ from specialties.models import Specialty
 class AppointmentCreateSerializer(serializers.Serializer):
     doctor_id = serializers.IntegerField()
     specialty_id = serializers.IntegerField()
+    headquarters_id = serializers.IntegerField()
     scheduled_at = serializers.DateTimeField()
     consultation_reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
 
@@ -19,6 +20,12 @@ class AppointmentCreateSerializer(serializers.Serializer):
     def validate_specialty_id(self, value):
         if not Specialty.objects.filter(pk=value, active=True).exists():
             raise serializers.ValidationError("La especialidad no existe o no está activa.")
+        return value
+
+    def validate_headquarters_id(self, value):
+        from headquarters.models import Headquarters
+        if not Headquarters.objects.filter(pk=value, active=True).exists():
+            raise serializers.ValidationError("La sede no existe o no está activa.")
         return value
 
 
@@ -70,3 +77,23 @@ class AppointmentListSerializer(serializers.ModelSerializer):
 
     def get_specialty_name(self, obj):
         return obj.specialty.name
+
+
+class DoctorAppointmentListSerializer(serializers.ModelSerializer):
+    patient_name = serializers.SerializerMethodField()
+    specialty_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Appointment
+        fields = ["id", "patient_name", "specialty_name", "scheduled_at", "duration_minutes", "status"]
+
+    def get_patient_name(self, obj):
+        return f"{obj.patient.user.nombre} {obj.patient.user.apellido}"
+
+    def get_specialty_name(self, obj):
+        return obj.specialty.name
+
+
+class AppointmentRescheduleSerializer(serializers.Serializer):
+    scheduled_at = serializers.DateTimeField()
+    reason = serializers.CharField(required=False, allow_blank=True, default="")

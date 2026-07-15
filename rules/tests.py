@@ -51,8 +51,11 @@ class RulesTestSetupMixin:
         self.patient = Patient.objects.create(
             user=patient_user,
             identity_document="123456789",
-            eps=self.eps,
+            document_type=Patient.DocumentType.CC,
             date_birth="2000-01-01",
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
+            eps=self.eps,
         )
         self.patient_user = patient_user
 

@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 
-from user.views import LoginView, LogoutView, MeView
+from user.views import InternalStaffRegisterView, LoginView, LogoutView, MeView
 from user.views import PatientRegisterView
 from user.views import PasswordResetConfirmView, PasswordResetRequestView
 
@@ -22,4 +22,5 @@ urlpatterns = [
         PasswordResetConfirmView.as_view(),
         name="password-reset-confirm",
     ),
+    path('staff/register/', InternalStaffRegisterView.as_view(), name='staff-register'),
 ]
