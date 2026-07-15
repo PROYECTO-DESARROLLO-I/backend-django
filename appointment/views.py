@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta
-from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -19,16 +19,11 @@ from appointment.serializers import (
 from availability.models import DoctorAvailability, ScheduleException
 from doctor.models import Doctor
 from notifications.services import send_appointment_confirmation
-from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
-from specialties.models import Specialty
-
-
-from django.contrib.auth import get_user_model
-from rest_framework.generics import ListAPIView
-from rest_framework.permissions import IsAuthenticated
-
 from patient.models import Patient
 from patient.serializers import PatientListSerializer
+from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
+from rules.services import period_bounds as _period_bounds
+from specialties.models import Specialty
 
 def _get_patient(user):
     try:
@@ -169,13 +164,15 @@ class AppointmentCreateView(APIView):
         )
         for restriction in restrictions:
             period_start, period_end = _period_bounds(scheduled_at, restriction.period)
-            count = Appointment.objects.filter(
+            appointments = Appointment.objects.filter(
                 patient=patient,
-                specialty=specialty,
                 status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
                 scheduled_at__date__gte=period_start,
                 scheduled_at__date__lte=period_end,
-            ).count()
+            )
+            if restriction.specialty_id is not None:
+                appointments = appointments.filter(specialty=specialty)
+            count = appointments.count()
             if count >= restriction.max_appointments_per_patient:
                 label = "semana" if restriction.period == Period.WEEKLY else "mes"
                 raise ValidationError(
@@ -190,20 +187,29 @@ class AppointmentCreateView(APIView):
     def _check_eps_limit(self, patient, specialty, scheduled_at):
         if not patient.eps:
             return
-        limits = EPSAppointmentLimit.objects.filter(
+        # select_for_update locks the matching limit rows so concurrent bookings for the
+        # same EPS (even across different doctors) are serialized and cannot both pass
+        # the count check before either has committed its new appointment.
+        # order_by() clears the model's default ordering, which otherwise pulls in an
+        # implicit LEFT OUTER JOIN on the nullable "specialty" FK (via Specialty's own
+        # default ordering) — Postgres refuses to lock rows on the nullable side of an
+        # outer join ("FOR UPDATE cannot be applied to the nullable side of an outer join").
+        limits = EPSAppointmentLimit.objects.select_for_update().filter(
             Q(specialty=specialty) | Q(specialty__isnull=True),
             eps=patient.eps,
             active=True,
-        )
+        ).order_by("pk")
         for limit in limits:
             period_start, period_end = _period_bounds(scheduled_at, limit.period)
-            count = Appointment.objects.filter(
-                patient=patient,
-                specialty=specialty,
+            appointments = Appointment.objects.filter(
+                patient__eps=patient.eps,
                 status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
                 scheduled_at__date__gte=period_start,
                 scheduled_at__date__lte=period_end,
-            ).count()
+            )
+            if limit.specialty_id is not None:
+                appointments = appointments.filter(specialty=specialty)
+            count = appointments.count()
             if count >= limit.max_appointments:
                 label = "semana" if limit.period == Period.WEEKLY else "mes"
                 raise ValidationError(
@@ -264,21 +270,6 @@ class AppointmentDetailView(APIView):
         except Appointment.DoesNotExist:
             raise ValidationError({"detail": "Cita no encontrada."})
         return Response(AppointmentDetailSerializer(appointment).data)
-
-
-def _period_bounds(scheduled_at, period):
-    from datetime import timedelta as _td
-    appt_date = scheduled_at.date() if hasattr(scheduled_at, "date") else scheduled_at
-    if period == Period.WEEKLY:
-        monday = appt_date - _td(days=appt_date.weekday())
-        return monday, monday + _td(days=6)
-    else:
-        first = appt_date.replace(day=1)
-        if first.month == 12:
-            last = first.replace(day=31)
-        else:
-            last = first.replace(month=first.month + 1) - _td(days=1)
-        return first, last
 
 
 # ==========================================

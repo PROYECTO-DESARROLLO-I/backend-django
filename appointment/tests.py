@@ -260,6 +260,84 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("tope", str(response.data))
 
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_eps_limit_blocks_across_different_patients_of_same_eps(self, mock_email):
+        EPSAppointmentLimit.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period=Period.MONTHLY,
+            max_appointments=1,
+            active=True,
+        )
+        self.client.post(self.url, self.booking_payload(), format="json")
+
+        patient_user2 = User.objects.create_user(
+            email="paciente2@test.com",
+            password=self.password,
+            nombre="Juan",
+            apellido="Torres",
+            rol=User.Role.PATIENT,
+        )
+        Patient.objects.create(
+            user=patient_user2,
+            identity_document="999888777",
+            eps=self.eps,
+            date_birth="1995-05-12",
+        )
+        self.client.force_authenticate(user=patient_user2)
+        response = self.client.post(
+            self.url,
+            self.booking_payload(scheduled_at=make_aware(self.test_date, time(10, 0)).isoformat()),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("tope", str(response.data))
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_global_eps_limit_without_specialty_blocks_any_specialty(self, mock_email):
+        EPSAppointmentLimit.objects.create(
+            eps=self.eps,
+            specialty=None,
+            period=Period.MONTHLY,
+            max_appointments=1,
+            active=True,
+        )
+        self.client.post(self.url, self.booking_payload(), format="json")
+
+        specialty2 = Specialty.objects.create(name="Dermatologia", active=True)
+        doctor_user2 = User.objects.create_user(
+            email="medico2@test.com",
+            password=self.password,
+            nombre="Ana",
+            apellido="Rios",
+            rol=User.Role.DOCTOR,
+        )
+        doctor2 = Doctor.objects.create(
+            user=doctor_user2, identity_document="111111111", active=True
+        )
+        DoctorSpecialty.objects.create(doctor=doctor2, specialty=specialty2)
+        for weekday in range(7):
+            DoctorAvailability.objects.create(
+                doctor=doctor2,
+                specialty=specialty2,
+                weekday=weekday,
+                start_time=time(8, 0),
+                end_time=time(17, 0),
+                appointment_duration=30,
+                active=True,
+            )
+
+        payload = self.booking_payload(
+            doctor_id=doctor2.id,
+            specialty_id=specialty2.id,
+            scheduled_at=make_aware(self.test_date, time(10, 0)).isoformat(),
+        )
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("tope", str(response.data))
+
     def test_rejects_when_eps_has_no_remaining_budget(self):
         EPSBudget.objects.create(
             eps=self.eps,
@@ -291,7 +369,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertIn("specialty_id", response.data)
 
     @patch("appointment.views.send_appointment_confirmation")
-    def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):
+    def test_does_not_apply_eps_validations_when_patient_eps_has_no_restrictions_configured(self, mock_email):
         EPSAppointmentLimit.objects.create(
             eps=self.eps,
             specialty=self.specialty,
