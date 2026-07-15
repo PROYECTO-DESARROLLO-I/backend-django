@@ -37,6 +37,10 @@ class AppointmentBookingSetupMixin:
         self.patient = Patient.objects.create(
             user=patient_user,
             identity_document="123456789",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
             eps=self.eps,
             date_birth="2000-01-01",
         )
@@ -78,6 +82,7 @@ class AppointmentBookingSetupMixin:
         payload = {
             "doctor_id": self.doctor.id,
             "specialty_id": self.specialty.id,
+            "headquarters_id": self.headquarters.id,
             "scheduled_at": self.scheduled_at.isoformat(),
             "consultation_reason": "Control general",
         }
@@ -130,6 +135,10 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         Patient.objects.create(
             user=patient_user2,
             identity_document="999888777",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234568",
+            address="Calle 1 # 2-3",
             eps=self.eps,
             date_birth="1995-05-12",
         )
@@ -162,6 +171,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
             DoctorAvailability.objects.create(
                 doctor=doctor2,
                 specialty=specialty2,
+                headquarters=self.headquarters,
                 weekday=weekday,
                 start_time=time(8, 0),
                 end_time=time(17, 0),
@@ -177,6 +187,15 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("El paciente ya tiene una cita agendada en ese horario.", str(response.data))
+
+    def test_rejects_booking_when_headquarters_does_not_match_availability(self):
+        other_hq = Headquarters.objects.create(name="Sede Incorrecta", active=True)
+
+        payload = self.booking_payload(headquarters_id=other_hq.id)
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("no corresponde a una disponibilidad válida", str(response.data))
 
     def test_rejects_slot_that_is_not_in_doctor_availability(self):
         payload = self.booking_payload(
@@ -289,25 +308,45 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("doctor_id", response.data)
         self.assertIn("specialty_id", response.data)
+        self.assertIn("headquarters_id", response.data)
 
     @patch("appointment.views.send_appointment_confirmation")
     def test_does_not_apply_eps_validations_when_patient_has_no_eps(self, mock_email):
+        # Patient belongs to self.eps but limit is set on a different EPS — should be ignored.
+        eps2 = EPS.objects.create(name="EPS Solo", code="EPS002", active=True)
         EPSAppointmentLimit.objects.create(
-            eps=self.eps,
+            eps=eps2,
             specialty=self.specialty,
             period=Period.MONTHLY,
             max_appointments=1,
             active=True,
         )
+        # Pre-book to exhaust eps2's limit for another patient
+        other_user = User.objects.create_user(
+            email="otro_eps@test.com",
+            password=self.password,
+            nombre="Otro",
+            apellido="EPS",
+            rol=User.Role.PATIENT,
+        )
+        other_patient = Patient.objects.create(
+            user=other_user,
+            identity_document="000000002",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234572",
+            address="Calle 1 # 2-3",
+            eps=eps2,
+        )
         Appointment.objects.create(
-            patient=self.patient,
+            patient=other_patient,
             doctor=self.doctor,
             specialty=self.specialty,
             headquarters=self.headquarters,
             scheduled_at=make_aware(self.test_date, time(8, 0)),
             duration_minutes=30,
             status=Appointment.Status.CONFIRMED,
-            created_by=self.patient_user,
+            created_by=other_user,
         )
         
         # En vez de asignar None (que viola el NOT NULL de la Base de Datos), 
@@ -316,6 +355,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         self.patient.eps = particular_eps
         self.patient.save()
 
+        # self.patient belongs to self.eps which has no limit — booking must succeed
         response = self.client.post(self.url, self.booking_payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -406,6 +446,10 @@ class AppointmentListTests(AppointmentBookingSetupMixin, APITestCase):
         other_patient = Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234569",
+            address="Calle 1 # 2-3",
             date_birth="1992-08-20",
             eps=self.eps,
         )
@@ -495,6 +539,10 @@ class AppointmentDetailTests(AppointmentBookingSetupMixin, APITestCase):
         Patient.objects.create(
             user=patient_user2,
             identity_document="000111222",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234570",
+            address="Calle 1 # 2-3",
             date_birth="1994-11-05",
             eps=self.eps,
         )
