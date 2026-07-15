@@ -4,6 +4,7 @@ from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from django.utils.crypto import get_random_string
+from django.contrib.auth import get_user_model
 
 from user.models import User
 from patient.models import Patient
@@ -13,7 +14,7 @@ from doctor.models import Doctor
 from headquarters.models import Headquarters
 from specialties.models import Specialty
 
-User = get_user_model()
+#User = get_user_model()
 
 
 class UserSignupSerializer(serializers.Serializer):
