@@ -1,8 +1,12 @@
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import update_last_login
+from django.contrib.auth.tokens import default_token_generator
 from django.db import transaction
 from django.utils import timezone
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -10,6 +14,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from notifications.services import send_password_reset_link
 from user.authentication import (
     build_authenticated_user_payload,
     create_auth_tokens,
@@ -23,6 +28,10 @@ from user.serializers import (
     LogoutSerializer,
 )
 from user.serializers import PatientRegisterSerializer
+from user.serializers import (
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+)
 
 INVALID_CREDENTIALS_MESSAGE = "Credenciales inválidas"
 INACTIVE_ACCOUNT_MESSAGE = "No fue posible iniciar sesión"
@@ -30,6 +39,13 @@ LOCKED_ACCOUNT_MESSAGE = "Cuenta temporalmente bloqueada. Intente más tarde."
 LOGOUT_SUCCESS_MESSAGE = "Sesión cerrada correctamente"
 LOGOUT_REQUIRED_TOKEN_MESSAGE = "Token de cierre de sesión requerido"
 LOGOUT_ERROR_MESSAGE = "No fue posible cerrar la sesión"
+PASSWORD_RESET_REQUEST_MESSAGE = (
+    "Si el correo está registrado, se ha enviado un enlace de recuperación."
+)
+PASSWORD_RESET_INVALID_MESSAGE = (
+    "El enlace de recuperación es inválido o ha expirado."
+)
+PASSWORD_RESET_SUCCESS_MESSAGE = "Tu contraseña ha sido actualizada exitosamente."
 
 
 class LoginView(APIView):
@@ -171,6 +187,90 @@ class PatientRegisterView(APIView):
         return Response( #Si los datos no son validos, devuelve error
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordResetRequestView(APIView):
+    """
+    POST /api/auth/password-reset/
+    Solicita el envío de un enlace de recuperación de contraseña.
+    No revela si el correo está registrado o no.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        user = get_user_model().objects.filter(email__iexact=email).first()
+
+        if user is not None and user.is_active:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            reset_url = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+            send_password_reset_link(user, reset_url)
+
+        return Response(
+            {"detail": PASSWORD_RESET_REQUEST_MESSAGE},
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    POST /api/auth/password-reset/confirm/
+    Confirma el restablecimiento de contraseña usando uid y token.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        uid = serializer.validated_data["uid"]
+        token = serializer.validated_data["token"]
+        new_password = serializer.validated_data["new_password"]
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = get_user_model().objects.get(pk=user_id)
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            UnicodeDecodeError,
+            get_user_model().DoesNotExist,
+        ):
+            user = None
+
+        if (
+            user is None
+            or not user.is_active
+            or not default_token_generator.check_token(user, token)
+        ):
+            return Response(
+                {"detail": PASSWORD_RESET_INVALID_MESSAGE},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.save(
+            update_fields=[
+                "password",
+                "failed_login_attempts",
+                "locked_until",
+                "updated_at",
+            ]
+        )
+
+        return Response(
+            {"detail": PASSWORD_RESET_SUCCESS_MESSAGE},
+            status=status.HTTP_200_OK,
         )
 
 

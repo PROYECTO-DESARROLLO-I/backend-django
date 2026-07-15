@@ -84,7 +84,7 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
             },
             "eps": {
                 "id": instance.eps_id,
-                "name": instance.eps.get_name_display() if instance.eps else None,
+                "name": instance.eps.name if instance.eps else None,
             },
         }
 

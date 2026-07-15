@@ -38,6 +38,8 @@ class Patient(models.Model):
     eps = models.ForeignKey(
         "eps.EPS",
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="patients",
         db_column="eps_id",
     )

@@ -31,9 +31,11 @@ class AvailableSlotsTests(APITestCase):
         self.patient = Patient.objects.create(
             user=patient_user,
             identity_document="123456789",
+            document_type=Patient.DocumentType.CC,
             date_birth=date(1990, 1, 1),
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
             eps=eps,
-            date_birth="2000-01-01",
         )
 
         doctor_user = User.objects.create_user(

@@ -436,7 +436,7 @@ class PatientRegistrationSerializerTests(TestCase):
         self.assertEqual(data["user"]["apellido"], "Test")
         self.assertEqual(data["identity_document"], "99999999")
         self.assertEqual(data["eps"]["id"], self.eps.id)
-        self.assertEqual(data["eps"]["name"], self.eps.get_name_display())
+        self.assertEqual(data["eps"]["name"], self.eps.name)
 
     def test_atomic_transaction_on_save(self):
         """Test: Transacción atómica al guardar"""

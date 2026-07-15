@@ -56,3 +56,15 @@ class IsAdministrativeUser(BasePermission):
             and request.user.rol in [User.Role.SUPERADMIN,User.Role.ADMINISTRATIVE]
         )
 
+
+class IsSuperAdmin(BasePermission):
+    """Allows access only to users with superadmin role."""
+
+    message = "Solo el superadministrador puede gestionar las restricciones del negocio."
+
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.rol == User.Role.SUPERADMIN
+        )
