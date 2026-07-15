@@ -1,14 +1,62 @@
 from datetime import date, datetime, timedelta
 
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
+from rest_framework import status
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from appointment.models import Appointment
 from availability.models import DoctorAvailability, ScheduleException
-from availability.serializers import SlotSerializer
+from availability.serializers import (
+    DoctorAvailabilityCreateSerializer,
+    DoctorAvailabilitySerializer,
+    SlotSerializer,
+)
+from headquarters.models import Headquarters
+from headquarters.serializers import HeadquartersSerializer
+from specialties.serializers import SpecialtySerializer
+
+
+def _get_doctor(user):
+    if not hasattr(user, "doctor_profile"):
+        raise PermissionDenied("Solo los medicos pueden gestionar su disponibilidad.")
+    return user.doctor_profile
+
+
+class DoctorAvailabilityView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        doctor = _get_doctor(request.user)
+        availabilities = (
+            DoctorAvailability.objects.filter(doctor=doctor)
+            .select_related("specialty", "headquarters")
+            .order_by("weekday", "start_time")
+        )
+        specialties = doctor.specialties.filter(active=True).order_by("name")
+        headquarters = Headquarters.objects.filter(active=True).order_by("name")
+
+        return Response({
+            "availabilities": DoctorAvailabilitySerializer(availabilities, many=True).data,
+            "specialties": SpecialtySerializer(specialties, many=True).data,
+            "headquarters": HeadquartersSerializer(headquarters, many=True).data,
+        })
+
+    def post(self, request):
+        doctor = _get_doctor(request.user)
+        serializer = DoctorAvailabilityCreateSerializer(
+            data=request.data,
+            context={"doctor": doctor},
+        )
+        serializer.is_valid(raise_exception=True)
+        availability = serializer.save()
+
+        return Response(
+            DoctorAvailabilitySerializer(availability).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class AvailableSlotsView(APIView):
