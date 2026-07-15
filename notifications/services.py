@@ -150,3 +150,85 @@ def send_appointment_rescheduled(appointment, previous_scheduled_at):
         notification.status = Notification.Status.FAILED
     finally:
         notification.save(update_fields=["status", "sent_at"])
+        
+
+def send_appointment_cancelled(appointment, cancelled_by):
+    """
+    Notifica la cancelación al paciente y al médico.
+    cancelled_by: instancia de User que realizó la cancelación.
+    """
+    patient_user = appointment.patient.user
+    doctor_user  = appointment.doctor.user
+    scheduled_local = timezone.localtime(appointment.scheduled_at)
+
+    # ── Notificación al paciente ──────────────────────────────────────────
+    patient_subject = f"Cancelación de cita médica — {appointment.specialty.name}"
+    patient_message = (
+        f"Hola {patient_user.nombre},\n\n"
+        f"Tu cita ha sido cancelada:\n\n"
+        f"  Especialidad : {appointment.specialty.name}\n"
+        f"  Médico       : Dr(a). {doctor_user.nombre} {doctor_user.apellido}\n"
+        f"  Fecha y hora : {scheduled_local.strftime('%d/%m/%Y %H:%M')}\n"
+        f"  Número de cita: #{appointment.pk}\n\n"
+        f"Si deseas agendar una nueva cita, puedes hacerlo desde la plataforma.\n\n"
+        f"Salud AgendaX"
+    )
+
+    patient_notification = Notification.objects.create(
+        appointment=appointment,
+        user=patient_user,
+        type=Notification.Type.CANCELLATION,
+        channel="email",
+        status=Notification.Status.PENDING,
+    )
+
+    try:
+        send_mail(
+            subject=patient_subject,
+            message=patient_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[patient_user.email],
+            fail_silently=False,
+        )
+        patient_notification.status = Notification.Status.SENT
+        patient_notification.sent_at = timezone.now()
+    except Exception:
+        patient_notification.status = Notification.Status.FAILED
+    finally:
+        patient_notification.save(update_fields=["status", "sent_at"])
+
+    # ── Notificación al médico ────────────────────────────────────────────
+    doctor_subject = f"Cita cancelada — {scheduled_local.strftime('%d/%m/%Y %H:%M')}"
+    doctor_message = (
+        f"Hola Dr(a). {doctor_user.nombre},\n\n"
+        f"La siguiente cita ha sido cancelada:\n\n"
+        f"  Paciente     : {patient_user.nombre} {patient_user.apellido}\n"
+        f"  Especialidad : {appointment.specialty.name}\n"
+        f"  Fecha y hora : {scheduled_local.strftime('%d/%m/%Y %H:%M')}\n"
+        f"  Número de cita: #{appointment.pk}\n\n"
+        f"El horario ha quedado disponible nuevamente.\n\n"
+        f"Salud AgendaX"
+    )
+
+    doctor_notification = Notification.objects.create(
+        appointment=appointment,
+        user=doctor_user,
+        type=Notification.Type.CANCELLATION,
+        channel="email",
+        status=Notification.Status.PENDING,
+    )
+
+    try:
+        send_mail(
+            subject=doctor_subject,
+            message=doctor_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[doctor_user.email],
+            fail_silently=False,
+        )
+        doctor_notification.status = Notification.Status.SENT
+        doctor_notification.sent_at = timezone.now()
+    except Exception:
+        doctor_notification.status = Notification.Status.FAILED
+    finally:
+        doctor_notification.save(update_fields=["status", "sent_at"])
