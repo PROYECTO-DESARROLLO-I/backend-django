@@ -92,6 +92,7 @@ class PatientRegistrationSerializer(serializers.ModelSerializer):
 
 class PatientListSerializer(serializers.ModelSerializer):
     user = UserResponseSerializer(read_only=True) 
+    eps = serializers.SerializerMethodField()
 
     class Meta:
         model = Patient
@@ -99,5 +100,15 @@ class PatientListSerializer(serializers.ModelSerializer):
             "id", 
             "identity_document", 
             "document_type", 
-            "user"
+            "phone_number",
+            "user",
+            "eps"
         ]
+
+    def get_eps(self, instance):
+        if instance.eps:
+            return {
+                "id": instance.eps.id,
+                "name": instance.eps.name  
+            }
+        return None

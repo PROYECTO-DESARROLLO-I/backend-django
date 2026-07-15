@@ -13,9 +13,16 @@ from availability.serializers import SlotSerializer
 
 class AvailableSlotsView(APIView):
     """
-    GET /api/availability/slots/?doctor=<id>&specialty=<id>&date=<YYYY-MM-DD>&view=week|month
-    Returns free time slots for a doctor+specialty combination.
-    Default view is weekly (7 days from the requested date).
+    GET /api/availability/slots/
+
+    Modes:
+      1. By doctor+specialty (original):
+         ?doctor=<id>&specialty=<id>[&date=<YYYY-MM-DD>][&view=week|month]
+
+      2. By specialty+headquarters (HU14):
+         ?specialty=<id>&headquarters=<id>[&date_from=<YYYY-MM-DD>][&date_to=<YYYY-MM-DD>]
+         Returns all free slots across all doctors in that sede+specialty,
+         including the sede address and consulting room for each slot.
     """
 
     permission_classes = [IsAuthenticated]
@@ -23,34 +30,87 @@ class AvailableSlotsView(APIView):
     def get(self, request):
         doctor_id = request.query_params.get("doctor")
         specialty_id = request.query_params.get("specialty")
+        headquarters_id = request.query_params.get("headquarters")
+
+        if not specialty_id:
+            raise ValidationError({"specialty": "El parámetro 'specialty' es requerido."})
+
+        if headquarters_id and not doctor_id:
+            return self._slots_by_headquarters(request, specialty_id, headquarters_id)
+
+        if not doctor_id:
+            raise ValidationError({"detail": "Debe proporcionar 'doctor' o 'headquarters' junto con 'specialty'."})
+
+        # Original mode: slots for a specific doctor
         date_str = request.query_params.get("date")
         view = request.query_params.get("view", "week")
-
-        if not doctor_id or not specialty_id:
-            raise ValidationError({"detail": "Los parámetros 'doctor' y 'specialty' son requeridos."})
 
         try:
             start_date = date.fromisoformat(date_str) if date_str else date.today()
         except ValueError:
             raise ValidationError({"date": "Formato inválido. Use YYYY-MM-DD."})
 
-        if view == "month":
-            end_date = start_date + timedelta(days=29)
-        else:
-            end_date = start_date + timedelta(days=6)
+        end_date = start_date + timedelta(days=29 if view == "month" else 6)
 
-        slots = self._generate_slots(doctor_id, specialty_id, start_date, end_date)
+        slots = self._generate_slots(doctor_id, specialty_id, start_date, end_date, headquarters_filter=headquarters_id)
         serializer = SlotSerializer(slots, many=True)
         return Response({"view": view, "start_date": start_date, "end_date": end_date, "slots": serializer.data})
 
-    def _generate_slots(self, doctor_id, specialty_id, start_date, end_date):
-        availabilities = list(
+    def _slots_by_headquarters(self, request, specialty_id, headquarters_id):
+        date_from_str = request.query_params.get("date_from")
+        date_to_str = request.query_params.get("date_to")
+
+        try:
+            start_date = date.fromisoformat(date_from_str) if date_from_str else date.today()
+        except ValueError:
+            raise ValidationError({"date_from": "Formato inválido. Use YYYY-MM-DD."})
+
+        try:
+            end_date = date.fromisoformat(date_to_str) if date_to_str else start_date + timedelta(days=29)
+        except ValueError:
+            raise ValidationError({"date_to": "Formato inválido. Use YYYY-MM-DD."})
+
+        if end_date < start_date:
+            raise ValidationError({"date_to": "La fecha de fin debe ser mayor o igual a la de inicio."})
+
+        # Collect all doctors with availability in this sede+specialty
+        doctor_ids = (
             DoctorAvailability.objects.filter(
-                doctor_id=doctor_id,
                 specialty_id=specialty_id,
+                headquarters_id=headquarters_id,
                 active=True,
-            ).select_related("headquarters")
+            )
+            .values_list("doctor_id", flat=True)
+            .distinct()
         )
+
+        all_slots = []
+        for doctor_id in doctor_ids:
+            all_slots.extend(
+                self._generate_slots(doctor_id, specialty_id, start_date, end_date, headquarters_filter=headquarters_id)
+            )
+
+        all_slots.sort(key=lambda s: (s["date"], s["start_time"]))
+        serializer = SlotSerializer(all_slots, many=True)
+        return Response({
+            "specialty_id": int(specialty_id),
+            "headquarters_id": int(headquarters_id),
+            "start_date": start_date,
+            "end_date": end_date,
+            "slots": serializer.data,
+        })
+
+    def _generate_slots(self, doctor_id, specialty_id, start_date, end_date, headquarters_filter=None):
+        avail_qs = DoctorAvailability.objects.filter(
+            doctor_id=doctor_id,
+            specialty_id=specialty_id,
+            active=True,
+        ).select_related("headquarters", "doctor__user")
+
+        if headquarters_filter:
+            avail_qs = avail_qs.filter(headquarters_id=headquarters_filter)
+
+        availabilities = list(avail_qs)
 
         if not availabilities:
             return []
@@ -88,21 +148,27 @@ class AvailableSlotsView(APIView):
                     while current_slot + duration <= slot_end:
                         slot_end_dt = current_slot + duration
 
-                        # Skip past slots
                         slot_start_aware = timezone.make_aware(current_slot)
                         if slot_start_aware <= now:
                             current_slot += duration
                             continue
 
                         if not self._is_booked(current_slot, slot_end_dt, booked_appointments):
+                            doctor_name = None
+                            if avail.doctor and avail.doctor.user:
+                                doctor_name = f"Dr(a). {avail.doctor.user.nombre} {avail.doctor.user.apellido}"
                             slots.append(
                                 {
                                     "date": current_date,
                                     "start_time": current_slot.time(),
                                     "end_time": slot_end_dt.time(),
                                     "duration_minutes": avail.appointment_duration,
+                                    "doctor_id": int(doctor_id),
+                                    "doctor_name": doctor_name,
                                     "headquarters_id": avail.headquarters_id,
                                     "headquarters_name": avail.headquarters.name if avail.headquarters else None,
+                                    "headquarters_address": avail.headquarters.address if avail.headquarters else None,
+                                    "consulting_room": avail.consulting_room or None,
                                 }
                             )
                         current_slot += duration

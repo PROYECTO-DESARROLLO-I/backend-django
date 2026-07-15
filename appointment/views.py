@@ -10,17 +10,20 @@ from rest_framework.views import APIView
 
 from django.db.models import F, Q
 
-from appointment.models import Appointment
+from appointment.models import Appointment, AppointmentHistory
 from appointment.serializers import (
     AppointmentCreateSerializer,
     AppointmentDetailSerializer,
     AppointmentListSerializer,
+    AppointmentRescheduleSerializer,
+    DoctorAppointmentListSerializer,
 )
 from availability.models import DoctorAvailability, ScheduleException
 from doctor.models import Doctor
-from notifications.services import send_appointment_confirmation
+from notifications.services import send_appointment_confirmation, send_appointment_rescheduled
 from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
 from specialties.models import Specialty
+from user.permissions import IsDoctor
 
 
 from django.contrib.auth import get_user_model
@@ -35,6 +38,69 @@ def _get_patient(user):
         return user.patient_profile
     except Exception:
         raise PermissionDenied("Solo los pacientes pueden gestionar citas.")
+
+
+def _get_availability(doctor, specialty_id, scheduled_at):
+    weekday = scheduled_at.weekday()
+    slot_time = scheduled_at.time()
+
+    for avail in DoctorAvailability.objects.filter(
+        doctor=doctor, specialty_id=specialty_id, active=True, weekday=weekday
+    ).select_related("headquarters"):
+        start_min = avail.start_time.hour * 60 + avail.start_time.minute
+        slot_min = slot_time.hour * 60 + slot_time.minute
+        end_min = avail.end_time.hour * 60 + avail.end_time.minute
+
+        offset = slot_min - start_min
+        # Slot must start at an aligned boundary and fit within the window
+        if offset < 0:
+            continue
+        if offset % avail.appointment_duration != 0:
+            continue
+        if slot_min + avail.appointment_duration > end_min:
+            continue
+        return avail
+
+    raise ValidationError(
+        {"scheduled_at": "La franja horaria seleccionada no corresponde a una disponibilidad válida del médico."}
+    )
+
+
+def _check_no_schedule_exception(doctor, scheduled_at):
+    if ScheduleException.objects.filter(doctor=doctor, date=scheduled_at.date()).exists():
+        raise ValidationError(
+            {"scheduled_at": "El médico no tiene disponibilidad en esa fecha."}
+        )
+
+
+def _check_slot_free(doctor, slot_start, slot_end, exclude_appointment_id=None):
+    qs = Appointment.objects.filter(
+        doctor=doctor,
+        status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
+        scheduled_at__lt=slot_end,
+    )
+    if exclude_appointment_id is not None:
+        qs = qs.exclude(pk=exclude_appointment_id)
+    for appt in qs:
+        appt_end = appt.scheduled_at + timedelta(minutes=appt.duration_minutes)
+        if appt_end > slot_start:
+            raise ValidationError({"scheduled_at": "Esta franja ya no está disponible."})
+
+
+def _check_patient_no_overlap(patient, slot_start, slot_end, exclude_appointment_id=None):
+    qs = Appointment.objects.filter(
+        patient=patient,
+        status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
+        scheduled_at__lt=slot_end,
+    )
+    if exclude_appointment_id is not None:
+        qs = qs.exclude(pk=exclude_appointment_id)
+    for appt in qs:
+        appt_end = appt.scheduled_at + timedelta(minutes=appt.duration_minutes)
+        if appt_end > slot_start:
+            raise ValidationError(
+                {"scheduled_at": "Ya tienes una cita agendada en ese horario."}
+            )
 
 
 class AppointmentCreateView(APIView):
@@ -66,6 +132,7 @@ class AppointmentCreateView(APIView):
 
         doctor_id = data["doctor_id"]
         specialty_id = data["specialty_id"]
+        headquarters_id = data["headquarters_id"]
         scheduled_at = data["scheduled_at"]
 
         if timezone.is_naive(scheduled_at):
@@ -76,13 +143,13 @@ class AppointmentCreateView(APIView):
             doctor = Doctor.objects.select_for_update().get(pk=doctor_id)
             specialty = Specialty.objects.get(pk=specialty_id)
 
-            avail = self._get_availability(doctor, specialty_id, scheduled_at)
+            avail = _get_availability(doctor, specialty_id, scheduled_at)
             duration_minutes = avail.appointment_duration
             slot_end = scheduled_at + timedelta(minutes=duration_minutes)
 
-            self._check_no_schedule_exception(doctor, scheduled_at)
-            self._check_slot_free(doctor, scheduled_at, slot_end)
-            self._check_patient_no_overlap(patient, scheduled_at, slot_end)
+            _check_no_schedule_exception(doctor, scheduled_at)
+            _check_slot_free(doctor, scheduled_at, slot_end)
+            _check_patient_no_overlap(patient, scheduled_at, slot_end)
             self._check_frequency_restriction(patient, specialty, scheduled_at)
             self._check_eps_limit(patient, specialty, scheduled_at)
             # Returns the locked budget row (or None) so we can discount after booking.
@@ -110,12 +177,16 @@ class AppointmentCreateView(APIView):
             status=status.HTTP_201_CREATED,
         )
 
-    def _get_availability(self, doctor, specialty_id, scheduled_at):
+    def _get_availability(self, doctor, specialty_id, headquarters_id, scheduled_at):
         weekday = scheduled_at.weekday()
         slot_time = scheduled_at.time()
 
         for avail in DoctorAvailability.objects.filter(
-            doctor=doctor, specialty_id=specialty_id, active=True, weekday=weekday
+            doctor=doctor,
+            specialty_id=specialty_id,
+            headquarters_id=headquarters_id,
+            active=True,
+            weekday=weekday,
         ).select_related("headquarters"):
             start_min = avail.start_time.hour * 60 + avail.start_time.minute
             slot_min = slot_time.hour * 60 + slot_time.minute
@@ -132,7 +203,7 @@ class AppointmentCreateView(APIView):
             return avail
 
         raise ValidationError(
-            {"scheduled_at": "La franja horaria seleccionada no corresponde a una disponibilidad válida del médico."}
+            {"scheduled_at": "La franja horaria seleccionada no corresponde a una disponibilidad válida del médico en esa sede."}
         )
 
     def _check_no_schedule_exception(self, doctor, scheduled_at):
@@ -263,6 +334,88 @@ class AppointmentDetailView(APIView):
             ).get(pk=pk, patient=patient)
         except Appointment.DoesNotExist:
             raise ValidationError({"detail": "Cita no encontrada."})
+        return Response(AppointmentDetailSerializer(appointment).data)
+
+
+def _get_doctor(user):
+    if not hasattr(user, "doctor_profile"):
+        raise PermissionDenied("Solo los médicos pueden gestionar sus citas.")
+    return user.doctor_profile
+
+
+class DoctorAppointmentListView(APIView):
+    permission_classes = [IsAuthenticated, IsDoctor]
+
+    def get(self, request):
+        doctor = _get_doctor(request.user)
+        appointments = (
+            Appointment.objects.filter(doctor=doctor)
+            .select_related("patient__user", "specialty")
+            .order_by("scheduled_at")
+        )
+        serializer = DoctorAppointmentListSerializer(appointments, many=True)
+        return Response(serializer.data)
+
+
+class AppointmentRescheduleView(APIView):
+    permission_classes = [IsAuthenticated, IsDoctor]
+
+    def post(self, request, pk):
+        doctor = _get_doctor(request.user)
+        serializer = AppointmentRescheduleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        new_scheduled_at = data["scheduled_at"]
+        if timezone.is_naive(new_scheduled_at):
+            new_scheduled_at = timezone.make_aware(new_scheduled_at)
+        reason = data.get("reason", "")
+
+        with transaction.atomic():
+            # Lock the doctor row so this reschedule serializes against concurrent
+            # bookings/reschedules for the same doctor, same as AppointmentCreateView.
+            doctor = Doctor.objects.select_for_update().get(pk=doctor.pk)
+
+            try:
+                appointment = Appointment.objects.select_for_update().select_related(
+                    "patient", "specialty", "doctor"
+                ).get(pk=pk, doctor=doctor)
+            except Appointment.DoesNotExist:
+                raise PermissionDenied("No tienes permiso para reprogramar esta cita.")
+
+            if appointment.status in (Appointment.Status.CANCELLED, Appointment.Status.ATTENDED):
+                raise ValidationError(
+                    {"detail": "No se puede reprogramar una cita cancelada o atendida."}
+                )
+
+            avail = _get_availability(doctor, appointment.specialty_id, new_scheduled_at)
+            duration_minutes = avail.appointment_duration
+            slot_end = new_scheduled_at + timedelta(minutes=duration_minutes)
+
+            _check_no_schedule_exception(doctor, new_scheduled_at)
+            _check_slot_free(doctor, new_scheduled_at, slot_end, exclude_appointment_id=appointment.pk)
+            _check_patient_no_overlap(
+                appointment.patient, new_scheduled_at, slot_end, exclude_appointment_id=appointment.pk
+            )
+
+            previous_scheduled_at = appointment.scheduled_at
+
+            appointment.scheduled_at = new_scheduled_at
+            appointment.duration_minutes = duration_minutes
+            appointment.headquarters = avail.headquarters
+            appointment.status = Appointment.Status.RESCHEDULED
+            appointment.save(update_fields=["scheduled_at", "duration_minutes", "headquarters", "status", "updated_at"])
+
+            AppointmentHistory.objects.create(
+                appointment=appointment,
+                previous_scheduled_at=previous_scheduled_at,
+                new_scheduled_at=new_scheduled_at,
+                changed_by=request.user,
+                reason=reason,
+            )
+
+        send_appointment_rescheduled(appointment, previous_scheduled_at)
+
         return Response(AppointmentDetailSerializer(appointment).data)
 
 
