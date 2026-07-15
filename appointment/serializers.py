@@ -77,3 +77,23 @@ class AppointmentListSerializer(serializers.ModelSerializer):
 
     def get_specialty_name(self, obj):
         return obj.specialty.name
+
+
+class DoctorAppointmentListSerializer(serializers.ModelSerializer):
+    patient_name = serializers.SerializerMethodField()
+    specialty_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Appointment
+        fields = ["id", "patient_name", "specialty_name", "scheduled_at", "duration_minutes", "status"]
+
+    def get_patient_name(self, obj):
+        return f"{obj.patient.user.nombre} {obj.patient.user.apellido}"
+
+    def get_specialty_name(self, obj):
+        return obj.specialty.name
+
+
+class AppointmentRescheduleSerializer(serializers.Serializer):
+    scheduled_at = serializers.DateTimeField()
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
