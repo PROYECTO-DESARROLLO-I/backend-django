@@ -133,3 +133,24 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 # Umbral de advertencia para alertas de topes EPS (porcentaje), cuando se alcanza este porcentaje del presupuesto, se envía una alerta al administrativo y superadmin.
 EPS_ALERT_WARNING_PERCENT = 80
+
+# Celery Configuration
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutos
+CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutos (soft limit antes del hard limit)
+
+# Celery Beat Configuration (Periodic Tasks)
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    "send-appointment-reminders-every-hour": {
+        "task": "notifications.tasks.send_appointment_reminders",
+        "schedule": crontab(minute=0),  # Cada hora en el minuto 0
+    },
+}

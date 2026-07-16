@@ -43,6 +43,7 @@ class Notification(models.Model):
     type = models.CharField(max_length=20, choices=Type.choices, db_column="tipo")
     channel = models.CharField(max_length=30, default="email", db_column="canal")
     status = models.CharField(max_length=20, choices=Status.choices, db_column="estado")
+    error_message = models.TextField(blank=True, null=True, db_column="mensaje_error")
     sent_at = models.DateTimeField(null=True, blank=True, db_column="enviada_at")
     created_at = models.DateTimeField(auto_now_add=True)
 
