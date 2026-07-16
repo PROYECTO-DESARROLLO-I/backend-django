@@ -44,7 +44,7 @@ class Command(BaseCommand):
         eps_sura, _ = EPS.objects.get_or_create(
             code="SURA",
             defaults={
-                "name": EPS.Name.SURA,
+                "name": "Sura",
                 "active": True,
             },
         )
@@ -52,7 +52,7 @@ class Command(BaseCommand):
         eps_compensar, _ = EPS.objects.get_or_create(
             code="COMPENSAR",
             defaults={
-                "name": EPS.Name.COMPENSAR,
+                "name": "Compensar",
                 "active": True,
             },
         )

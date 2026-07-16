@@ -8,6 +8,7 @@ from django.http import FileResponse
 from appointment.models import Appointment
 from specialties.models import Specialty
 from doctor.models import Doctor
+from user.permissions import IsAdministrative
 
 from .filters import apply_appointment_filters
 from .serializers import AppointmentDashboardSerializer
@@ -19,7 +20,7 @@ class DashboardKPIView(APIView):
     GET /api/dashboard/kpis/
     KPIs del día: totales por estado, % cancelaciones, ocupación por médico.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdministrative]
 
     def get(self, request):
         today = timezone.localdate()
@@ -83,7 +84,7 @@ class AppointmentSearchView(APIView):
                   specialty, status, patient_document, patient_name,
                   page, page_size
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdministrative]
 
     def get(self, request):
         qs = Appointment.objects.select_related(
@@ -116,7 +117,7 @@ class SpecialtyStatsView(APIView):
 
     Query params: date_from, date_to
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdministrative]
 
     def get(self, request):
         qs = Appointment.objects.all()
@@ -166,7 +167,7 @@ class ReportExportView(APIView):
     Exporta PDF con los resultados filtrados.
     Acepta los mismos query params que AppointmentSearchView.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdministrative]
 
     def get(self, request):
         qs = Appointment.objects.select_related(
