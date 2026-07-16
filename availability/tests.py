@@ -434,3 +434,211 @@ class AvailableSlotsByHeadquartersTests(APITestCase):
         })
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class AdminDoctorAvailabilityManagementTests(APITestCase):
+    """CRUD de jornadas de disponibilidad por parte de personal administrativo."""
+
+    password = "ClaveSegura123*"
+
+    def setUp(self):
+        self.manage_url = reverse("availability-manage")
+        self.exceptions_url = reverse("availability-exceptions")
+
+        self.specialty = Specialty.objects.create(name="Medicina General", active=True)
+        self.headquarters = Headquarters.objects.create(name="Sede Central", active=True)
+
+        doctor_user = User.objects.create_user(
+            email="medico@test.com",
+            password=self.password,
+            nombre="Carlos",
+            apellido="Perez",
+            rol=User.Role.DOCTOR,
+        )
+        self.doctor = Doctor.objects.create(
+            user=doctor_user, identity_document="987654321", active=True
+        )
+        DoctorSpecialty.objects.create(doctor=self.doctor, specialty=self.specialty)
+
+        self.admin_user = User.objects.create_user(
+            email="admin@test.com",
+            password=self.password,
+            nombre="Admin",
+            apellido="Sistema",
+            rol=User.Role.ADMINISTRATIVE,
+        )
+
+        patient_user = User.objects.create_user(
+            email="paciente@test.com",
+            password=self.password,
+            nombre="Maria",
+            apellido="Lopez",
+            rol=User.Role.PATIENT,
+        )
+        eps = EPS.objects.create(name="EPS Test", code="EPS001", active=True)
+        self.patient_user = patient_user
+        Patient.objects.create(
+            user=patient_user,
+            identity_document="123456789",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234567",
+            address="Calle 1 # 2-3",
+            eps=eps,
+        )
+
+        self.payload = {
+            "doctor": self.doctor.id,
+            "specialty": self.specialty.id,
+            "headquarters": self.headquarters.id,
+            "weekday": 0,
+            "start_time": "08:00:00",
+            "end_time": "12:00:00",
+            "appointment_duration": 30,
+        }
+
+    def test_admin_can_create_availability(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        response = self.client.post(self.manage_url, self.payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(DoctorAvailability.objects.count(), 1)
+
+    def test_patient_cannot_create_availability(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.post(self.manage_url, self.payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_can_list_availability_by_doctor(self):
+        DoctorAvailability.objects.create(
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            weekday=0,
+            start_time=time(8, 0),
+            end_time=time(12, 0),
+            appointment_duration=30,
+            active=True,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        response = self.client.get(self.manage_url, {"doctor": self.doctor.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+
+    def test_admin_can_deactivate_availability(self):
+        availability = DoctorAvailability.objects.create(
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            weekday=0,
+            start_time=time(8, 0),
+            end_time=time(12, 0),
+            appointment_duration=30,
+            active=True,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        url = reverse("availability-manage-detail", args=[availability.id])
+        response = self.client.patch(url, {"active": False}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        availability.refresh_from_db()
+        self.assertFalse(availability.active)
+
+    def test_admin_can_delete_availability(self):
+        availability = DoctorAvailability.objects.create(
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            weekday=0,
+            start_time=time(8, 0),
+            end_time=time(12, 0),
+            appointment_duration=30,
+            active=True,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        url = reverse("availability-manage-detail", args=[availability.id])
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(DoctorAvailability.objects.filter(pk=availability.id).exists())
+
+    def test_admin_can_create_schedule_exception(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        payload = {
+            "doctor": self.doctor.id,
+            "date": (date.today() + timedelta(days=5)).isoformat(),
+            "reason": "Vacaciones",
+            "type": ScheduleException.ExceptionType.VACATION,
+        }
+        response = self.client.post(self.exceptions_url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ScheduleException.objects.count(), 1)
+
+    def test_schedule_exception_blocks_slots(self):
+        DoctorAvailability.objects.create(
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            weekday=(date.today() + timedelta(days=5)).weekday(),
+            start_time=time(8, 0),
+            end_time=time(10, 0),
+            appointment_duration=30,
+            active=True,
+        )
+        blocked_date = date.today() + timedelta(days=5)
+        ScheduleException.objects.create(
+            doctor=self.doctor,
+            date=blocked_date,
+            reason="Vacaciones",
+            type=ScheduleException.ExceptionType.VACATION,
+        )
+
+        self.client.force_authenticate(user=self.patient_user)
+        slots_url = reverse("availability-slots")
+        response = self.client.get(slots_url, {
+            "doctor": self.doctor.id,
+            "specialty": self.specialty.id,
+            "date": blocked_date.isoformat(),
+            "view": "week",
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        dates = {s["date"] for s in response.data["slots"]}
+        self.assertNotIn(blocked_date.isoformat(), dates)
+
+    def test_admin_can_delete_schedule_exception(self):
+        exception = ScheduleException.objects.create(
+            doctor=self.doctor,
+            date=date.today() + timedelta(days=5),
+            reason="Vacaciones",
+            type=ScheduleException.ExceptionType.VACATION,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        url = reverse("availability-exceptions-detail", args=[exception.id])
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ScheduleException.objects.filter(pk=exception.id).exists())
+
+    def test_patient_cannot_create_schedule_exception(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        payload = {
+            "doctor": self.doctor.id,
+            "date": (date.today() + timedelta(days=5)).isoformat(),
+            "reason": "Vacaciones",
+            "type": ScheduleException.ExceptionType.VACATION,
+        }
+        response = self.client.post(self.exceptions_url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
