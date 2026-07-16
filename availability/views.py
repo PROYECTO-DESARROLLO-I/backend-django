@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,13 +10,16 @@ from rest_framework.views import APIView
 from appointment.models import Appointment
 from availability.models import DoctorAvailability, ScheduleException
 from availability.serializers import (
+    AdminDoctorAvailabilityCreateSerializer,
     DoctorAvailabilityCreateSerializer,
     DoctorAvailabilitySerializer,
+    ScheduleExceptionSerializer,
     SlotSerializer,
 )
 from headquarters.models import Headquarters
 from headquarters.serializers import HeadquartersSerializer
 from specialties.serializers import SpecialtySerializer
+from user.permissions import IsAdministrative
 
 
 def _get_doctor(user):
@@ -232,3 +235,112 @@ class AvailableSlotsView(APIView):
             if appt_start < slot_end and appt_end > slot_start:
                 return True
         return False
+
+
+class AdminDoctorAvailabilityView(APIView):
+    """
+    GET /api/availability/manage/[?doctor=<id>]
+    Lista las jornadas de disponibilidad (opcionalmente filtradas por médico).
+
+    POST /api/availability/manage/
+    Crea una jornada de disponibilidad para el médico indicado.
+
+    Solo accesible para personal administrativo/superadmin.
+    """
+
+    permission_classes = [IsAuthenticated, IsAdministrative]
+
+    def get(self, request):
+        doctor_id = request.query_params.get("doctor")
+        availabilities = DoctorAvailability.objects.select_related(
+            "doctor__user", "specialty", "headquarters"
+        )
+        if doctor_id:
+            availabilities = availabilities.filter(doctor_id=doctor_id)
+        availabilities = availabilities.order_by("doctor", "weekday", "start_time")
+
+        return Response(DoctorAvailabilitySerializer(availabilities, many=True).data)
+
+    def post(self, request):
+        serializer = AdminDoctorAvailabilityCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        availability = serializer.save()
+
+        return Response(
+            DoctorAvailabilitySerializer(availability).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminDoctorAvailabilityDetailView(APIView):
+    """
+    PATCH /api/availability/manage/<pk>/ - Activar/desactivar una jornada.
+    DELETE /api/availability/manage/<pk>/ - Eliminar una jornada.
+    """
+
+    permission_classes = [IsAuthenticated, IsAdministrative]
+
+    def _get_object(self, pk):
+        try:
+            return DoctorAvailability.objects.get(pk=pk)
+        except DoctorAvailability.DoesNotExist:
+            raise NotFound("Disponibilidad no encontrada.")
+
+    def patch(self, request, pk):
+        availability = self._get_object(pk)
+        if "active" in request.data:
+            availability.active = bool(request.data["active"])
+            availability.save(update_fields=["active"])
+        return Response(DoctorAvailabilitySerializer(availability).data)
+
+    def delete(self, request, pk):
+        availability = self._get_object(pk)
+        availability.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ScheduleExceptionListView(APIView):
+    """
+    GET /api/availability/exceptions/[?doctor=<id>]
+    Lista las excepciones de horario (vacaciones, feriados, bloqueos).
+
+    POST /api/availability/exceptions/
+    Crea una excepción de horario para un médico.
+
+    Solo accesible para personal administrativo/superadmin.
+    """
+
+    permission_classes = [IsAuthenticated, IsAdministrative]
+
+    def get(self, request):
+        doctor_id = request.query_params.get("doctor")
+        exceptions = ScheduleException.objects.select_related("doctor__user")
+        if doctor_id:
+            exceptions = exceptions.filter(doctor_id=doctor_id)
+        exceptions = exceptions.order_by("doctor", "date")
+
+        return Response(ScheduleExceptionSerializer(exceptions, many=True).data)
+
+    def post(self, request):
+        serializer = ScheduleExceptionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        exception = serializer.save()
+
+        return Response(
+            ScheduleExceptionSerializer(exception).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ScheduleExceptionDetailView(APIView):
+    """DELETE /api/availability/exceptions/<pk>/ - Elimina una excepción de horario."""
+
+    permission_classes = [IsAuthenticated, IsAdministrative]
+
+    def delete(self, request, pk):
+        try:
+            exception = ScheduleException.objects.get(pk=pk)
+        except ScheduleException.DoesNotExist:
+            raise NotFound("Excepción de horario no encontrada.")
+        exception.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
