@@ -1159,6 +1159,84 @@ class AppointmentRescheduleTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(new_budget.used_budget, 1)
 
 
+class AppointmentListFilterTests(AppointmentBookingSetupMixin, APITestCase):
+    def setUp(self):
+        self.url = reverse("appointment-list")
+        self.build_scenario()
+
+        self.other_specialty = Specialty.objects.create(name="Dermatologia", active=True)
+        self.other_headquarters = Headquarters.objects.create(name="Sede Otra", active=True)
+        doctor_user2 = User.objects.create_user(
+            email="medico2@test.com",
+            password=self.password,
+            nombre="Ana",
+            apellido="Rios",
+            rol=User.Role.DOCTOR,
+        )
+        self.doctor2 = Doctor.objects.create(
+            user=doctor_user2, identity_document="111111111", active=True
+        )
+
+        self.appointment1 = Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=make_aware(self.test_date, time(9, 0)),
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=self.patient_user,
+        )
+        self.appointment2 = Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor2,
+            specialty=self.other_specialty,
+            headquarters=self.other_headquarters,
+            scheduled_at=make_aware(self.test_date, time(10, 0)),
+            duration_minutes=30,
+            status=Appointment.Status.CANCELLED,
+            created_by=self.patient_user,
+        )
+
+    def test_filters_by_specialty(self):
+        response = self.client.get(self.url, {"specialty": self.specialty.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], self.appointment1.id)
+
+    def test_filters_by_doctor(self):
+        response = self.client.get(self.url, {"doctor": self.doctor2.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], self.appointment2.id)
+
+    def test_filters_by_status(self):
+        response = self.client.get(self.url, {"status": Appointment.Status.CANCELLED})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], self.appointment2.id)
+
+    def test_filters_by_headquarters(self):
+        response = self.client.get(self.url, {"headquarters": self.other_headquarters.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], self.appointment2.id)
+
+    def test_doctor_list_filters_by_specialty_and_status(self):
+        doctor_url = reverse("doctor-appointment-list")
+        self.client.force_authenticate(user=self.doctor.user)
+
+        response = self.client.get(doctor_url, {"specialty": self.specialty.id, "status": Appointment.Status.CONFIRMED})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], self.appointment1.id)
+
+
 class AppointmentCancelTests(AppointmentBookingSetupMixin, APITestCase):
     def setUp(self):
         self.build_scenario()
