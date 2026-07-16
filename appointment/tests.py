@@ -342,6 +342,7 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
             DoctorAvailability.objects.create(
                 doctor=doctor2,
                 specialty=specialty2,
+                headquarters=self.headquarters,
                 weekday=weekday,
                 start_time=time(8, 0),
                 end_time=time(17, 0),
@@ -381,6 +382,51 @@ class AppointmentCreateTests(AppointmentBookingSetupMixin, APITestCase):
         response = self.client.post(self.url, self.booking_payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    @patch("appointment.views.send_appointment_confirmation")
+    def test_rescheduled_appointment_blocks_slot_for_other_booking(self, mock_email):
+        # A RESCHEDULED appointment must be just as "occupying" a slot as a
+        # CONFIRMED/PENDING one — it must not be invisible to slot validations.
+        patient_user2 = User.objects.create_user(
+            email="paciente2@test.com",
+            password=self.password,
+            nombre="Juan",
+            apellido="Torres",
+            rol=User.Role.PATIENT,
+        )
+        patient2 = Patient.objects.create(
+            user=patient_user2,
+            identity_document="999888777",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 1, 1),
+            phone_number="+573001234568",
+            address="Calle 1 # 2-3",
+            eps=self.eps,
+        )
+        Appointment.objects.create(
+            patient=patient2,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=self.scheduled_at,
+            duration_minutes=30,
+            status=Appointment.Status.RESCHEDULED,
+            created_by=patient_user2,
+        )
+
+        response = self.client.post(self.url, self.booking_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Esta franja ya no está disponible", str(response.data))
+
+    def test_rejects_booking_in_the_past(self):
+        past_slot = timezone.now() - timedelta(days=1)
+        response = self.client.post(
+            self.url, self.booking_payload(scheduled_at=past_slot.isoformat()), format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("scheduled_at", response.data)
 
     def test_returns_400_when_required_fields_are_missing(self):
         response = self.client.post(self.url, {}, format="json")
@@ -1037,3 +1083,137 @@ class AppointmentRescheduleTests(AppointmentBookingSetupMixin, APITestCase):
         response = self.client.post(self.url, self.reschedule_payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_rejects_reschedule_to_a_past_date(self):
+        past_slot = timezone.now() - timedelta(days=1)
+        response = self.client.post(
+            self.url, self.reschedule_payload(scheduled_at=past_slot.isoformat()), format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("scheduled_at", response.data)
+
+    @patch("appointment.views.send_appointment_rescheduled")
+    def test_reschedule_rejected_when_new_period_eps_budget_is_exhausted(self, mock_email):
+        # Budget for the original period (where self.appointment currently lives) has
+        # plenty of room, but the budget covering the new date is already exhausted.
+        next_month_date = (self.test_date.replace(day=1) + timedelta(days=32)).replace(day=5)
+        EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=100,
+            used_budget=1,
+        )
+        next_period_budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=next_month_date.replace(day=1),
+            period_end=next_month_date,
+            total_budget=1,
+            used_budget=1,
+        )
+
+        new_slot = make_aware(next_month_date, time(11, 0))
+        response = self.client.post(
+            self.url, self.reschedule_payload(scheduled_at=new_slot.isoformat()), format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("presupuestal", str(response.data))
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.scheduled_at, self.scheduled_at)
+        next_period_budget.refresh_from_db()
+        self.assertEqual(next_period_budget.used_budget, 1)
+
+    @patch("appointment.views.send_appointment_rescheduled")
+    def test_reschedule_moves_eps_budget_usage_to_new_period(self, mock_email):
+        next_month_date = (self.test_date.replace(day=1) + timedelta(days=32)).replace(day=5)
+        original_budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=100,
+            used_budget=1,
+        )
+        new_budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=next_month_date.replace(day=1),
+            period_end=next_month_date,
+            total_budget=100,
+            used_budget=0,
+        )
+
+        new_slot = make_aware(next_month_date, time(11, 0))
+        response = self.client.post(
+            self.url, self.reschedule_payload(scheduled_at=new_slot.isoformat()), format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        original_budget.refresh_from_db()
+        new_budget.refresh_from_db()
+        self.assertEqual(original_budget.used_budget, 0)
+        self.assertEqual(new_budget.used_budget, 1)
+
+
+class AppointmentCancelTests(AppointmentBookingSetupMixin, APITestCase):
+    def setUp(self):
+        self.build_scenario()
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=self.scheduled_at,
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=self.patient_user,
+        )
+        self.url = reverse("appointment-cancel", args=[self.appointment.id])
+
+    @patch("appointment.views.send_appointment_cancelled")
+    def test_patient_can_cancel_own_appointment(self, mock_email):
+        response = self.client.post(self.url, {"reason": "Ya no puedo asistir"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.CANCELLED)
+
+    @patch("appointment.views.send_appointment_cancelled")
+    def test_cancellation_refunds_eps_budget(self, mock_email):
+        budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=10,
+            used_budget=3,
+        )
+
+        response = self.client.post(self.url, {"reason": "Cambio de planes"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        budget.refresh_from_db()
+        self.assertEqual(budget.used_budget, 2)
+
+    @patch("appointment.views.send_appointment_cancelled")
+    def test_cancellation_refund_never_goes_below_zero(self, mock_email):
+        budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=10,
+            used_budget=0,
+        )
+
+        response = self.client.post(self.url, {"reason": "Cambio de planes"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        budget.refresh_from_db()
+        self.assertEqual(budget.used_budget, 0)
+
+
