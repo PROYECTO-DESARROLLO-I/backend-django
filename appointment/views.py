@@ -21,7 +21,7 @@ from appointment.serializers import (
 )
 from availability.models import DoctorAvailability, ScheduleException
 from doctor.models import Doctor
-from notifications.services import send_appointment_confirmation, send_appointment_rescheduled
+from notifications.services import send_appointment_confirmation, send_appointment_rescheduled, send_appointment_cancelled
 from patient.models import Patient
 from patient.serializers import PatientListSerializer
 from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
@@ -377,6 +377,101 @@ class AppointmentRescheduleView(APIView):
 
         return Response(AppointmentDetailSerializer(appointment).data)
 
+class AppointmentPatientRescheduleView(APIView):
+    """
+    POST /api/appointments/<id>/patient-reschedule/
+
+    El paciente reprograma su propia cita.
+    Criterios HU18:
+    - Solo puede reprogramar sus propias citas (CA-1)
+    - Valida disponibilidad del médico en el nuevo horario (CA-2, CA-4)
+    - Valida conflictos con otras citas del paciente (CA-4)
+    - Actualiza la cita y guarda historial (CA-5, CA-7)
+    - Notifica al médico (CA-6)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        patient = _get_patient(request.user)  # Verifica que el usuario autenticado es un paciente y obtiene su perfil
+
+        serializer = AppointmentRescheduleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        new_scheduled_at = data["scheduled_at"]
+        if timezone.is_naive(new_scheduled_at):
+            new_scheduled_at = timezone.make_aware(new_scheduled_at)
+        reason = data.get("reason", "Reprogramación solicitada por el paciente")
+
+        with transaction.atomic():
+            # Bloquear el doctor para serializar contra reservas concurrentes
+            try:
+                # Verifica que la cita pertenece al paciente autenticado
+                appointment = Appointment.objects.select_for_update(of=("self",)).select_related(
+                    "patient__user", "doctor__user", "specialty", "headquarters"
+                ).get(pk=pk, patient=patient)
+            except Appointment.DoesNotExist:
+                raise PermissionDenied(
+                    "No tienes permiso para reprogramar esta cita."
+                )
+
+            # No reprogramar citas en estados CANCELLED o ATTENDED
+            if appointment.status == Appointment.Status.ATTENDED:
+                raise ValidationError(
+                    {"detail": "No puedes reprogramar una cita que ya fue atendida."}
+                )
+            if appointment.status == Appointment.Status.CANCELLED:
+                raise ValidationError(
+                    {"detail": "No puedes reprogramar una cita cancelada."}
+                )
+
+            # Bloquear el doctor para evitar race conditions
+            doctor = Doctor.objects.select_for_update().get(pk=appointment.doctor_id)
+
+            # CA-4: validar disponibilidad y conflictos
+            avail = _get_availability(doctor, appointment.specialty_id, new_scheduled_at)
+            duration_minutes = avail.appointment_duration
+            slot_end = new_scheduled_at + timedelta(minutes=duration_minutes)
+
+            _check_no_schedule_exception(doctor, new_scheduled_at)
+            _check_slot_free(
+                doctor, new_scheduled_at, slot_end,
+                exclude_appointment_id=appointment.pk
+            )
+            _check_patient_no_overlap(
+                patient, new_scheduled_at, slot_end,
+                exclude_appointment_id=appointment.pk
+            )
+
+            previous_scheduled_at = appointment.scheduled_at
+
+            # Actualizar la cita con el nuevo horario y guardar en la base de datos
+            appointment.scheduled_at   = new_scheduled_at
+            appointment.duration_minutes = duration_minutes
+            appointment.headquarters   = avail.headquarters
+            appointment.status         = Appointment.Status.RESCHEDULED
+            appointment.save(update_fields=[
+                "scheduled_at", "duration_minutes",
+                "headquarters", "status", "updated_at"
+            ])
+
+            # Guardar el historial de cambios de la cita
+            AppointmentHistory.objects.create(
+                appointment=appointment,
+                previous_scheduled_at=previous_scheduled_at,
+                new_scheduled_at=new_scheduled_at,
+                changed_by=request.user,
+                reason=reason,
+            )
+
+        # Realiza la notificación al médico y paciente sobre la reprogramación de la cita
+        send_appointment_rescheduled(appointment, previous_scheduled_at)
+
+        return Response(
+            AppointmentDetailSerializer(appointment).data,
+            status=status.HTTP_200_OK,
+        )
+
 
 # ==========================================
 #          BUSQUEDA PACIENTE
@@ -413,3 +508,57 @@ class PatientSearchView(ListAPIView):
             Q(user__email__icontains=query)
         )
         return queryset.select_related('user', 'eps')
+    
+
+class AppointmentCancelView(APIView):
+    """
+        POST /api/appointments/<id>/cancel/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        patient = _get_patient(request.user)  # Solo pacientes pueden cancelar sus propias citas
+
+        with transaction.atomic():
+            try:
+                # Busca la cita en el paciente autenticado
+                appointment = Appointment.objects.select_for_update(of=("self",)).select_related(
+                    "patient__user", "doctor__user", "specialty", "headquarters"
+                ).get(pk=pk, patient=patient)
+            except Appointment.DoesNotExist:
+                raise PermissionDenied(
+                    "No tienes permiso para cancelar esta cita."
+                )
+
+            #  Validaciones de estado de la cita
+            if appointment.status == Appointment.Status.ATTENDED:
+                raise ValidationError(
+                    {"detail": "No puedes cancelar una cita que ya fue atendida."}
+                )
+            if appointment.status == Appointment.Status.CANCELLED:
+                raise ValidationError(
+                    {"detail": "Esta cita ya está cancelada."}
+                )
+
+            # Actualiza el estado de la cita a CANCELLED y guarda en la base de datos
+            appointment.status = Appointment.Status.CANCELLED
+            appointment.save(update_fields=["status", "updated_at"])
+
+            # Guarda el historial de cambios de la cita, incluyendo la razón de cancelación
+            reason = request.data.get("reason", "Cancelación solicitada por el paciente")
+            AppointmentHistory.objects.create(
+                appointment=appointment,
+                previous_scheduled_at=appointment.scheduled_at,
+                new_scheduled_at=appointment.scheduled_at, 
+                changed_by=request.user, 
+                reason=reason,
+            )
+
+        # CA-5: Notificar al paciente y al médico sobre la cancelación de la cita
+        send_appointment_cancelled(appointment, cancelled_by=request.user)
+        
+        # Devuelve una respuesta exitosa con el ID de la cita cancelada
+        return Response(
+            {"detail": "Cita cancelada exitosamente.", "id": appointment.pk},
+            status=status.HTTP_200_OK,
+        )
