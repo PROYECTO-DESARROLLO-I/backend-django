@@ -42,10 +42,15 @@ def send_appointment_confirmation_email(self, appointment_id):
         doctor_user = appointment.doctor.user
         scheduled_local = timezone.localtime(appointment.scheduled_at)
         
+        # Preparar nombres limpios
+        raw_doctor_name = f"Dr(a). {doctor_user.nombre} {doctor_user.apellido}"
+        clean_doctor_name = f"{doctor_user.nombre} {doctor_user.apellido}"
+
         # Preparar contexto para plantilla
         context = {
             "patient_name": patient_user.nombre,
-            "doctor_name": f"Dr(a). {doctor_user.nombre} {doctor_user.apellido}",
+            "doctor_name": raw_doctor_name,
+            "doctor_name_clean": clean_doctor_name,  # Variable limpia sin 'Dr(a).'
             "specialty": appointment.specialty.name,
             "scheduled_at": scheduled_local.strftime("%d/%m/%Y %H:%M"),
             "duration_minutes": appointment.duration_minutes,
@@ -63,7 +68,7 @@ def send_appointment_confirmation_email(self, appointment_id):
             status=Notification.Status.PENDING,
         )
         
-        # Renderizar plantilla HTML
+        # Renderizar plantilla HTML paciente
         html_content = render_to_string("notifications/appointment_confirmation.html", context)
         
         # Crear y enviar correo a paciente
@@ -91,6 +96,7 @@ def send_appointment_confirmation_email(self, appointment_id):
             status=Notification.Status.PENDING,
         )
         
+        # Modificar contexto para la plantilla del médico
         context["patient_name"] = f"{patient_user.nombre} {patient_user.apellido}"
         html_content = render_to_string("notifications/appointment_confirmation_doctor.html", context)
         
@@ -114,7 +120,6 @@ def send_appointment_confirmation_email(self, appointment_id):
         raise
     except Exception as e:
         logger.error(f"Error sending appointment confirmation: {str(e)}")
-        # Actualizar notificaciones a fallidas si existen
         try:
             Notification.objects.filter(
                 appointment_id=appointment_id,
@@ -154,10 +159,14 @@ def send_appointment_rescheduled_email(self, appointment_id, previous_scheduled_
         previous_local = timezone.localtime(datetime.fromisoformat(previous_scheduled_at))
         new_local = timezone.localtime(appointment.scheduled_at)
         
+        raw_doctor_name = f"Dr(a). {doctor_user.nombre} {doctor_user.apellido}"
+        clean_doctor_name = f"{doctor_user.nombre} {doctor_user.apellido}"
+
         # Contexto para plantilla
         context = {
             "patient_name": patient_user.nombre,
-            "doctor_name": f"Dr(a). {doctor_user.nombre} {doctor_user.apellido}",
+            "doctor_name": raw_doctor_name,
+            "doctor_name_clean": clean_doctor_name,
             "specialty": appointment.specialty.name,
             "previous_scheduled_at": previous_local.strftime("%d/%m/%Y %H:%M"),
             "new_scheduled_at": new_local.strftime("%d/%m/%Y %H:%M"),
@@ -260,9 +269,13 @@ def send_appointment_cancelled_email(self, appointment_id, cancelled_by_id):
         # Determinar quién canceló
         canceller_role = dict(User.Role.choices).get(cancelled_by.rol, "Sistema")
         
+        raw_doctor_name = f"Dr(a). {doctor_user.nombre} {doctor_user.apellido}"
+        clean_doctor_name = f"{doctor_user.nombre} {doctor_user.apellido}"
+
         context = {
             "patient_name": patient_user.nombre,
-            "doctor_name": f"Dr(a). {doctor_user.nombre} {doctor_user.apellido}",
+            "doctor_name": raw_doctor_name,
+            "doctor_name_clean": clean_doctor_name,
             "specialty": appointment.specialty.name,
             "scheduled_at": scheduled_local.strftime("%d/%m/%Y %H:%M"),
             "headquarters": appointment.headquarters.name if appointment.headquarters else "No especificada",
