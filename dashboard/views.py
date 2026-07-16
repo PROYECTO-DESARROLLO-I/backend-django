@@ -9,6 +9,7 @@ from appointment.models import Appointment
 from specialties.models import Specialty
 from doctor.models import Doctor
 from user.permissions import IsAdministrative
+from notifications.models import Notification
 
 from .filters import apply_appointment_filters
 from .serializers import AppointmentDashboardSerializer
@@ -195,3 +196,42 @@ class ReportExportView(APIView):
             filename=f"reporte_citas_{timezone.localdate()}.pdf",
             content_type='application/pdf',
         )
+    
+
+
+class AlertsView(APIView):
+    """
+    GET /api/dashboard/alerts/
+    Devuelve las alertas de control activas para mostrar en el panel administrativo.
+    Solo accesible por administrativos y superadmin.
+    """
+    permission_classes = [IsAuthenticated, IsAdministrative]
+
+    def get(self, request):
+        
+        alerts = (
+            Notification.objects.filter(
+                user=request.user,
+                type=Notification.Type.LIMIT_ALERT,
+            )
+            .select_related("limit__eps", "limit__specialty")
+            .order_by("-created_at")[:50]
+        )
+
+        data = [
+            {
+                "id":          n.id,
+                "status":      n.status,
+                "sent_at":     n.sent_at,
+                "created_at":  n.created_at,
+                "limit": {
+                    "eps":       n.limit.eps.name        if n.limit else None,
+                    "specialty": n.limit.specialty.name  if n.limit and n.limit.specialty else "Todas",
+                    "period":    n.limit.period          if n.limit else None,
+                    "max":       n.limit.max_appointments if n.limit else None,
+                } if n.limit else None,
+            }
+            for n in alerts
+        ]
+
+        return Response({"alerts": data, "total": len(data)})

@@ -130,3 +130,6 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@saludagendax.com")
 # Recuperación de contraseña
 PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "900"))  # 15 minutos
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Umbral de advertencia para alertas de topes EPS (porcentaje), cuando se alcanza este porcentaje del presupuesto, se envía una alerta al administrativo y superadmin.
+EPS_ALERT_WARNING_PERCENT = 80
