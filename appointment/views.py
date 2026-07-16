@@ -662,3 +662,55 @@ class AppointmentCancelView(APIView):
             {"detail": "Cita cancelada exitosamente.", "id": appointment.pk},
             status=status.HTTP_200_OK,
         )
+
+
+class AppointmentDoctorCancelView(APIView):
+    """
+    POST /api/appointments/<id>/doctor-cancel/
+
+    HU09: el médico cancela una cita propia, indicando obligatoriamente el motivo.
+    """
+    permission_classes = [IsAuthenticated, IsDoctor]
+
+    def post(self, request, pk):
+        doctor = _get_doctor(request.user)
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            raise ValidationError({"reason": "Debes indicar un motivo para cancelar la cita."})
+
+        with transaction.atomic():
+            try:
+                appointment = Appointment.objects.select_for_update(of=("self",)).select_related(
+                    "patient__user", "doctor__user", "specialty", "headquarters"
+                ).get(pk=pk, doctor=doctor)
+            except Appointment.DoesNotExist:
+                raise PermissionDenied("No tienes permiso para cancelar esta cita.")
+
+            if appointment.status == Appointment.Status.ATTENDED:
+                raise ValidationError(
+                    {"detail": "No puedes cancelar una cita que ya fue atendida."}
+                )
+            if appointment.status == Appointment.Status.CANCELLED:
+                raise ValidationError(
+                    {"detail": "Esta cita ya está cancelada."}
+                )
+
+            appointment.status = Appointment.Status.CANCELLED
+            appointment.save(update_fields=["status", "updated_at"])
+
+            AppointmentHistory.objects.create(
+                appointment=appointment,
+                previous_scheduled_at=appointment.scheduled_at,
+                new_scheduled_at=appointment.scheduled_at,
+                changed_by=request.user,
+                reason=reason,
+            )
+
+            _refund_eps_budget(appointment.patient, appointment.specialty, appointment.scheduled_at)
+
+        send_appointment_cancelled(appointment, cancelled_by=request.user)
+
+        return Response(
+            {"detail": "Cita cancelada exitosamente.", "id": appointment.pk},
+            status=status.HTTP_200_OK,
+        )
