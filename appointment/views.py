@@ -22,7 +22,7 @@ from appointment.serializers import (
 )
 from availability.models import DoctorAvailability, ScheduleException
 from doctor.models import Doctor
-from notifications.services import send_appointment_confirmation, send_appointment_rescheduled, send_appointment_cancelled
+from notifications.services import send_appointment_confirmation, send_appointment_rescheduled, send_appointment_cancelled,  check_and_send_limit_alert
 from patient.models import Patient
 from patient.serializers import PatientListSerializer
 from rules.models import EPSAppointmentLimit, EPSBudget, FrequencyRestriction, Period
@@ -330,6 +330,7 @@ class AppointmentCreateView(APIView):
                 EPSBudget.objects.filter(pk=budget.pk).update(used_budget=F("used_budget") + 1)
 
         send_appointment_confirmation(appointment)
+        check_and_send_limit_alert(appointment)
 
         try:
             # Best-effort: alerting the superadmin should never break the booking flow.

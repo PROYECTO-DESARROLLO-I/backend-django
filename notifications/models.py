@@ -19,6 +19,8 @@ class Notification(models.Model):
         on_delete=models.CASCADE,
         related_name="notifications",
         db_column="cita_id",
+        null = True,
+        blank = True,
     )
     user = models.ForeignKey(
         "user.User",

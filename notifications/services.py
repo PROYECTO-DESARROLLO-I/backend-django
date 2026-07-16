@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
+from django.conf import settings as django_settings
 
 from notifications.models import Notification
 
@@ -264,3 +265,221 @@ def send_appointment_cancelled(appointment, cancelled_by):
         doctor_notification.status = Notification.Status.FAILED
     finally:
         doctor_notification.save(update_fields=["status", "sent_at"])
+
+
+def _already_alerted_limit(limit, period_label):
+    """
+    Evita enviar la misma alerta dos veces para el mismo tope en el mismo período.
+    Retorna True si ya existe una notificación LIMIT_ALERT enviada para este limit.
+    """
+    return Notification.objects.filter(
+        limit=limit,
+        type=Notification.Type.LIMIT_ALERT,
+        status=Notification.Status.SENT,
+    ).exists()
+
+
+def _already_alerted_budget(eps, specialty, period_start):
+    """
+    Evita duplicar alertas de presupuesto para el mismo período.
+    """
+    return Notification.objects.filter(
+        type=Notification.Type.LIMIT_ALERT,
+        status=Notification.Status.SENT,
+        user__rol__in=["administrativo", "superadmin"],
+        created_at__date__gte=period_start,
+        # Identificamos por mensaje aproximado
+    ).filter(
+        user__notifications__isnull=False
+    ).exists()
+
+
+def _get_admin_users():
+    """Retorna todos los usuarios administrativos y superadmin activos"""
+    from user.models import User
+    return User.objects.filter(
+        rol__in=[User.Role.ADMINISTRATIVE, User.Role.SUPERADMIN],
+        is_active=True,
+    )
+
+
+def check_and_send_limit_alert(appointment, warning_percent=80):
+    """
+    Verifica topes de EPS y presupuesto tras agendar una cita.
+    Si el uso >= warning_percent, envía alerta a todos los administrativos.
+
+    Llamar despues de crear la cita existosamente, fuera de la transacción.
+
+    Args:
+        appointment: instancia de Appointment recién creada
+        warning_percent: umbral de advertencia (default 80%)
+    """
+
+    warning_percent = getattr(
+        django_settings, 'EPS_ALERT_WARNING_PERCENT', 80
+    )
+
+    from rules.models import EPSAppointmentLimit, EPSBudget, Period
+    from appointment.models import Appointment
+
+    patient  = appointment.patient
+    specialty = appointment.specialty
+
+    if not patient.eps:
+        return
+
+    scheduled_at = appointment.scheduled_at
+
+    # Verificar topes de citas por EPS 
+    from django.db.models import Q
+    from appointment.views import _period_bounds
+
+    limits = EPSAppointmentLimit.objects.filter(
+        Q(specialty=specialty) | Q(specialty__isnull=True),
+        eps=patient.eps,
+        active=True,
+    )
+
+    for limit in limits:
+        period_start, period_end = _period_bounds(scheduled_at, limit.period)
+        current_count = Appointment.objects.filter(
+            patient__eps=patient.eps,
+            specialty=specialty,
+            status__in=[Appointment.Status.CONFIRMED, Appointment.Status.PENDING],
+            scheduled_at__date__gte=period_start,
+            scheduled_at__date__lte=period_end,
+        ).count()
+
+        usage_percent = (current_count / limit.max_appointments) * 100
+        period_label  = "semana" if limit.period == Period.WEEKLY else "mes"
+
+        if usage_percent >= warning_percent:
+            if _already_alerted_limit(limit, period_label):
+                continue  # ya fue alertado, no duplicar
+
+            _send_limit_alert_email(
+                limit=limit,
+                eps_name=patient.eps.name,
+                specialty_name=specialty.name,
+                current_count=current_count,
+                max_count=limit.max_appointments,
+                usage_percent=usage_percent,
+                period_label=period_label,
+                alert_type="tope de citas",
+            )
+
+    # Verificar presupuesto EPS 
+    from django.utils import timezone as tz
+    appt_date = scheduled_at.date()
+
+    budgets = EPSBudget.objects.filter(
+        Q(specialty=specialty) | Q(specialty__isnull=True),
+        eps=patient.eps,
+        period_start__lte=appt_date,
+        period_end__gte=appt_date,
+    )
+
+    for budget in budgets:
+        if budget.total_budget == 0:
+            continue
+
+        usage_percent = (budget.used_budget / budget.total_budget) * 100
+
+        if usage_percent >= warning_percent:
+            _send_budget_alert_email(
+                budget=budget,
+                eps_name=patient.eps.name,
+                specialty_name=specialty.name if budget.specialty else "todas las especialidades",
+                used=budget.used_budget,
+                total=budget.total_budget,
+                usage_percent=usage_percent,
+            )
+
+
+def _send_limit_alert_email(limit, eps_name, specialty_name, current_count,
+                             max_count, usage_percent, period_label, alert_type):
+    """Envía email de alerta de tope a todos los administrativos y crea Notification."""
+    admins = _get_admin_users()
+    if not admins.exists():
+        return
+
+    subject = f"⚠️ Alerta de {alert_type} — {eps_name} / {specialty_name}"
+    message = (
+        f"ALERTA ADMINISTRATIVA — SaludAgendaX\n\n"
+        f"Se ha alcanzado el umbral de advertencia para:\n\n"
+        f"  EPS          : {eps_name}\n"
+        f"  Especialidad : {specialty_name}\n"
+        f"  Período      : Por {period_label}\n"
+        f"  Uso actual   : {current_count} / {max_count} citas ({usage_percent:.1f}%)\n\n"
+        f"El tope se alcanzará pronto. Revisa el dashboard administrativo "
+        f"para tomar decisiones oportunas.\n\n"
+        f"Salud AgendaX — Sistema de alertas automáticas"
+    )
+
+    for admin in admins:
+        notification = Notification.objects.create(
+            appointment=None,
+            user=admin,
+            limit=limit,
+            type=Notification.Type.LIMIT_ALERT,
+            channel="email",
+            status=Notification.Status.PENDING,
+        )
+        try:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[admin.email],
+                fail_silently=False,
+            )
+            notification.status = Notification.Status.SENT
+            notification.sent_at = timezone.now()
+        except Exception:
+            notification.status = Notification.Status.FAILED
+        finally:
+            notification.save(update_fields=["status", "sent_at"])
+
+
+def _send_budget_alert_email(budget, eps_name, specialty_name, used, total, usage_percent):
+    """Envía email de alerta de presupuesto a todos los administrativos."""
+    admins = _get_admin_users()
+    if not admins.exists():
+        return
+
+    subject = f"⚠️ Alerta de presupuesto — {eps_name} / {specialty_name}"
+    message = (
+        f"ALERTA ADMINISTRATIVA — SaludAgendaX\n\n"
+        f"El presupuesto de la siguiente EPS está próximo a agotarse:\n\n"
+        f"  EPS              : {eps_name}\n"
+        f"  Especialidad     : {specialty_name}\n"
+        f"  Período          : {budget.period_start} al {budget.period_end}\n"
+        f"  Presupuesto usado: {used} / {total} citas ({usage_percent:.1f}%)\n\n"
+        f"Si el presupuesto se agota, no se podrán agendar nuevas citas "
+        f"para esta EPS. Revisa el dashboard para tomar decisiones oportunas.\n\n"
+        f"Salud AgendaX — Sistema de alertas automáticas"
+    )
+
+    for admin in admins:
+        notification = Notification.objects.create(
+            appointment=None,
+            user=admin,
+            limit=None,
+            type=Notification.Type.LIMIT_ALERT,
+            channel="email",
+            status=Notification.Status.PENDING,
+        )
+        try:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[admin.email],
+                fail_silently=False,
+            )
+            notification.status = Notification.Status.SENT
+            notification.sent_at = timezone.now()
+        except Exception:
+            notification.status = Notification.Status.FAILED
+        finally:
+            notification.save(update_calls=["status", "sent_at"])
