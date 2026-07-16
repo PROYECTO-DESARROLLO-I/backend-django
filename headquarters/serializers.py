@@ -8,6 +8,19 @@ class HeadquartersSerializer(serializers.ModelSerializer):
         model = Headquarters
         fields = ["id", "name", "address", "phone", "active"]
 
+
+class HeadquartersCreateSerializer(serializers.ModelSerializer):
+    """Serializer used to create a new sede (headquarters)."""
+
+    class Meta:
+        model = Headquarters
+        fields = ["id", "name", "address", "phone", "active"]
+
+    def validate_name(self, value):
+        if Headquarters.objects.filter(name__iexact=value).exists():
+            raise serializers.ValidationError("Ya existe una sede con este nombre.")
+        return value
+
 #se puede añadir a futuro un metodo para obtener la sede con menos carga de pacientes
 """
 def obtener_sede_con_menos_carga():

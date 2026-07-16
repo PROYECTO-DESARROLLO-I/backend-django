@@ -1,27 +1,75 @@
 from datetime import date, timedelta
 
+from rest_framework import status
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from appointment.models import Appointment
 from availability.models import DoctorAvailability, ScheduleException
 from headquarters.models import Headquarters
-from headquarters.serializers import HeadquartersSerializer
+from headquarters.serializers import HeadquartersCreateSerializer, HeadquartersSerializer
+from patient.models import Patient
+from user.models import User
+from user.permissions import IsAdministrative
+
+_ADMIN_ROLES = {User.Role.ADMINISTRATIVE, User.Role.SUPERADMIN}
+
+
+class CanListHeadquarters(BasePermission):
+    """
+    Administrative/superadmin users can always list headquarters.
+    Patients can access the search flow only if they have a Patient profile.
+    """
+
+    message = "No tiene permisos para acceder a este recurso."
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser or user.rol in _ADMIN_ROLES:
+            return True
+        if user.rol == User.Role.PATIENT:
+            return Patient.objects.filter(user=user).exists()
+        return False
 
 
 class HeadquartersListView(APIView):
     """
     GET /api/headquarters/?specialty=<id>
-    Returns sedes that have at least one doctor with the given specialty
-    and free slots in the next 30 days.
+    - Administrative/superadmin users: returns all active sedes when no
+      specialty filter is provided.
+    - Patients: returns sedes that have at least one doctor with the given
+      specialty and free slots in the next 30 days (specialty is required).
+
+    POST /api/headquarters/
+    Allows administrative/superadmin users to create a new sede.
     """
 
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsAuthenticated(), IsAdministrative()]
+        return [CanListHeadquarters()]
+
+    def post(self, request):
+        serializer = HeadquartersCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        headquarters = serializer.save()
+        return Response(
+            HeadquartersSerializer(headquarters).data, status=status.HTTP_201_CREATED
+        )
 
     def get(self, request):
+        user = request.user
+        is_admin = user.is_superuser or user.rol in _ADMIN_ROLES
         specialty_id = request.query_params.get("specialty")
+
+        if is_admin and not specialty_id:
+            headquarters = Headquarters.objects.filter(active=True).order_by("name")
+            return Response(HeadquartersSerializer(headquarters, many=True).data)
+
         if not specialty_id:
             raise ValidationError({"specialty": "Este parámetro es requerido."})
 
