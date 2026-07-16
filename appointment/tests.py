@@ -1217,3 +1217,89 @@ class AppointmentCancelTests(AppointmentBookingSetupMixin, APITestCase):
         self.assertEqual(budget.used_budget, 0)
 
 
+class AppointmentDoctorCancelTests(AppointmentBookingSetupMixin, APITestCase):
+    def setUp(self):
+        self.build_scenario()
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=self.scheduled_at,
+            duration_minutes=30,
+            status=Appointment.Status.CONFIRMED,
+            created_by=self.patient_user,
+        )
+        self.url = reverse("appointment-doctor-cancel", args=[self.appointment.id])
+        self.client.force_authenticate(user=self.doctor.user)
+
+    @patch("appointment.views.send_appointment_cancelled")
+    def test_doctor_can_cancel_own_appointment_with_reason(self, mock_email):
+        response = self.client.post(self.url, {"reason": "El médico no podrá atender"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.CANCELLED)
+        history = AppointmentHistory.objects.get(appointment=self.appointment)
+        self.assertEqual(history.reason, "El médico no podrá atender")
+        self.assertEqual(history.changed_by, self.doctor.user)
+
+    def test_requires_reason(self):
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("reason", response.data)
+
+    def test_rejects_blank_reason(self):
+        response = self.client.post(self.url, {"reason": "   "}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("reason", response.data)
+
+    def test_doctor_cannot_cancel_another_doctors_appointment(self):
+        doctor_user2 = User.objects.create_user(
+            email="medico2@test.com",
+            password=self.password,
+            nombre="Ana",
+            apellido="Rios",
+            rol=User.Role.DOCTOR,
+        )
+        Doctor.objects.create(user=doctor_user2, identity_document="111111111", active=True)
+        self.client.force_authenticate(user=doctor_user2)
+
+        response = self.client.post(self.url, {"reason": "No es mi cita"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_patient_cannot_use_doctor_cancel_endpoint(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.post(self.url, {"reason": "Intento no autorizado"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @patch("appointment.views.send_appointment_cancelled")
+    def test_doctor_cancel_refunds_eps_budget(self, mock_email):
+        budget = EPSBudget.objects.create(
+            eps=self.eps,
+            specialty=self.specialty,
+            period_start=self.test_date.replace(day=1),
+            period_end=self.test_date,
+            total_budget=10,
+            used_budget=5,
+        )
+
+        response = self.client.post(self.url, {"reason": "El médico tuvo una emergencia"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        budget.refresh_from_db()
+        self.assertEqual(budget.used_budget, 4)
+
+    @patch("appointment.views.send_appointment_cancelled")
+    def test_rejects_cancelling_already_cancelled_appointment(self, mock_email):
+        self.appointment.status = Appointment.Status.CANCELLED
+        self.appointment.save()
+
+        response = self.client.post(self.url, {"reason": "Otra vez"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
