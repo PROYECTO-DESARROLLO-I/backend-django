@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nueva Cita Confirmada</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .content {
+            padding: 30px 20px;
+        }
+        .greeting {
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        .appointment-details {
+            background-color: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .detail-item {
+            display: flex;
+            margin-bottom: 12px;
+        }
+        .detail-label {
+            font-weight: 600;
+            width: 150px;
+            color: #667eea;
+        }
+        .detail-value {
+            flex: 1;
+            color: #333;
+        }
+        .appointment-number {
+            background-color: #e8f0fe;
+            color: #667eea;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        .footer {
+            background-color: #f5f5f5;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+        }
+        .button-group {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .button {
+            display: inline-block;
+            background-color: #667eea;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 600;
+            margin: 0 10px;
+        }
+        .button:hover {
+            background-color: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>✓ Nueva Cita Confirmada</h1>
+            <p style="margin: 10px 0 0 0;">Salud AgendaX - Agenda Médica</p>
+        </div>
+
+        <div class="content">
+            <div class="greeting">
+                Hola Dr(a). <strong>{{ doctor_name.replace('Dr(a). ', '') }}</strong>,
+            </div>
+
+            <p>
+                Se ha confirmado una nueva cita en tu agenda con los siguientes detalles:
+            </p>
+
+            <div class="appointment-details">
+                <div class="detail-item">
+                    <div class="detail-label">Paciente:</div>
+                    <div class="detail-value"><strong>{{ patient_name }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Especialidad:</div>
+                    <div class="detail-value"><strong>{{ specialty }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Fecha y Hora:</div>
+                    <div class="detail-value"><strong>{{ scheduled_at }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Duración:</div>
+                    <div class="detail-value"><strong>{{ duration_minutes }} minutos</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Sede:</div>
+                    <div class="detail-value"><strong>{{ headquarters }}</strong></div>
+                </div>
+                <div class="appointment-number">Cita #{{ appointment_id }}</div>
+            </div>
+
+            <p>
+                Esta cita ya está confirmada y registrada en tu agenda de Salud AgendaX. 
+                El paciente ha recibido la confirmación en su correo electrónico.
+            </p>
+
+            <div class="button-group">
+                <a href="{{ frontend_url }}/mi-agenda" class="button">Ver mi agenda</a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Este es un correo automático, por favor no respondas directamente a este mensaje.</p>
+            <p>&copy; 2024 Salud AgendaX. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cita Reprogramada</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .content {
+            padding: 30px 20px;
+        }
+        .greeting {
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        .appointment-details {
+            background-color: #f9f9f9;
+            border-left: 4px solid #f5576c;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .detail-item {
+            display: flex;
+            margin-bottom: 12px;
+        }
+        .detail-label {
+            font-weight: 600;
+            width: 180px;
+            color: #f5576c;
+        }
+        .detail-value {
+            flex: 1;
+            color: #333;
+        }
+        .appointment-number {
+            background-color: #ffe8eb;
+            color: #f5576c;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        .info-box {
+            background-color: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+            color: #1565c0;
+        }
+        .footer {
+            background-color: #f5f5f5;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Cita Reprogramada</h1>
+            <p style="margin: 10px 0 0 0;">Salud AgendaX - Agenda Médica</p>
+        </div>
+
+        <div class="content">
+            <div class="greeting">
+                Hola Dr(a). <strong>{{ doctor_name.replace('Dr(a). ', '') }}</strong>,
+            </div>
+
+            <p>
+                Una cita de tu agenda ha sido reprogramada. Los cambios son los siguientes:
+            </p>
+
+            <div class="appointment-details">
+                <div class="detail-item">
+                    <div class="detail-label">Paciente:</div>
+                    <div class="detail-value"><strong>{{ patient_name }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Especialidad:</div>
+                    <div class="detail-value"><strong>{{ specialty }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Fecha anterior:</div>
+                    <div class="detail-value"><strong>{{ previous_scheduled_at }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Nueva fecha:</div>
+                    <div class="detail-value"><strong style="color: #f5576c;">{{ new_scheduled_at }}</strong></div>
+                </div>
+                <div class="appointment-number">Cita #{{ appointment_id }}</div>
+            </div>
+
+            <div class="info-box">
+                ℹ️ El horario anterior ha quedado disponible nuevamente en tu agenda para 
+                programar a otros pacientes.
+            </div>
+
+            <p style="color: #666; font-size: 14px;">
+                Recuerda que esta información ya ha sido notificada al paciente. 
+                La cita está confirmada en la nueva fecha y hora indicada.
+            </p>
+        </div>
+
+        <div class="footer">
+            <p>Este es un correo automático, por favor no respondas directamente a este mensaje.</p>
+            <p>&copy; 2024 Salud AgendaX. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
