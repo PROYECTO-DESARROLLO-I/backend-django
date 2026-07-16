@@ -354,6 +354,20 @@ class AppointmentListView(APIView):
             .order_by("-scheduled_at")
         )
 
+        specialty_id = request.query_params.get("specialty")
+        doctor_id = request.query_params.get("doctor")
+        status_param = request.query_params.get("status")
+        headquarters_id = request.query_params.get("headquarters")
+
+        if specialty_id:
+            appointments = appointments.filter(specialty_id=specialty_id)
+        if doctor_id:
+            appointments = appointments.filter(doctor_id=doctor_id)
+        if status_param:
+            appointments = appointments.filter(status=status_param)
+        if headquarters_id:
+            appointments = appointments.filter(headquarters_id=headquarters_id)
+
         serializer = AppointmentListSerializer(appointments, many=True)
         return Response(serializer.data)
 
@@ -388,6 +402,17 @@ class DoctorAppointmentListView(APIView):
             .select_related("patient__user", "specialty")
             .order_by("scheduled_at")
         )
+
+        specialty_id = request.query_params.get("specialty")
+        status_param = request.query_params.get("status")
+        headquarters_id = request.query_params.get("headquarters")
+
+        if specialty_id:
+            appointments = appointments.filter(specialty_id=specialty_id)
+        if status_param:
+            appointments = appointments.filter(status=status_param)
+        if headquarters_id:
+            appointments = appointments.filter(headquarters_id=headquarters_id)
 
         serializer = DoctorAppointmentListSerializer(appointments, many=True)
         return Response(serializer.data)
