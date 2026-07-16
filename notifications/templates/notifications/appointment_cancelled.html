@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cancelación de Cita Médica</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #ff6b6b 0%, #d63031 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .content {
+            padding: 30px 20px;
+        }
+        .greeting {
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        .appointment-details {
+            background-color: #f9f9f9;
+            border-left: 4px solid #d63031;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .detail-item {
+            display: flex;
+            margin-bottom: 12px;
+        }
+        .detail-label {
+            font-weight: 600;
+            width: 150px;
+            color: #d63031;
+        }
+        .detail-value {
+            flex: 1;
+            color: #333;
+        }
+        .appointment-number {
+            background-color: #ffe8e8;
+            color: #d63031;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        .next-steps {
+            background-color: #f0f7ff;
+            padding: 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+            color: #333;
+        }
+        .next-steps h3 {
+            margin-top: 0;
+            color: #2196F3;
+        }
+        .next-steps ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .next-steps li {
+            margin: 8px 0;
+        }
+        .button-group {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .button {
+            display: inline-block;
+            background-color: #2196F3;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 600;
+            margin: 0 10px;
+        }
+        .button:hover {
+            background-color: #1976D2;
+        }
+        .footer {
+            background-color: #f5f5f5;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>✗ Cita Cancelada</h1>
+            <p style="margin: 10px 0 0 0;">Salud AgendaX</p>
+        </div>
+
+        <div class="content">
+            <div class="greeting">
+                Hola <strong>{{ patient_name }}</strong>,
+            </div>
+
+            <p>
+                Te informamos que tu cita médica ha sido cancelada. 
+                A continuación te compartimos los detalles:
+            </p>
+
+            <div class="appointment-details">
+                <div class="detail-item">
+                    <div class="detail-label">Especialidad:</div>
+                    <div class="detail-value"><strong>{{ specialty }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Médico:</div>
+                    <div class="detail-value"><strong>{{ doctor_name }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Fecha y Hora:</div>
+                    <div class="detail-value"><strong>{{ scheduled_at }}</strong></div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Sede:</div>
+                    <div class="detail-value"><strong>{{ headquarters }}</strong></div>
+                </div>
+                <div class="appointment-number">Cita #{{ appointment_id }}</div>
+            </div>
+
+            <div class="next-steps">
+                <h3>¿Qué puedes hacer ahora?</h3>
+                <ul>
+                    <li>✓ Agendar una nueva cita en la plataforma de Salud AgendaX</li>
+                    <li>✓ Contactar directamente al médico o a la sede si tienes dudas</li>
+                    <li>✓ Verificar tu disponibilidad en otros horarios</li>
+                </ul>
+            </div>
+
+            <div class="button-group">
+                <a href="{{ frontend_url }}/agendar-cita" class="button">Agendar nueva cita</a>
+            </div>
+
+            <p style="color: #666; font-size: 14px; margin-top: 20px;">
+                Si cancelaste tu cita y deseas volver a agendar con el mismo médico, 
+                puedes hacerlo directamente desde tu cuenta en Salud AgendaX.
+            </p>
+        </div>
+
+        <div class="footer">
+            <p>Este es un correo automático, por favor no respondas directamente a este mensaje.</p>
+            <p>Para soporte técnico, contáctanos en: soporte@saludagendax.com</p>
+            <p>&copy; 2024 Salud AgendaX. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>

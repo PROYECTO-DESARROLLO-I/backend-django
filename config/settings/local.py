@@ -23,3 +23,10 @@ DATABASES = {
         "OPTIONS": {"sslmode": os.getenv("DB_SSLMODE", "prefer")},
     }
 }
+
+# Email Backend Configuration (Console backend for development)
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Celery Configuration for Development
+CELERY_TASK_ALWAYS_EAGER = False  # Procesar tareas de forma asíncrona
+CELERY_TASK_EAGER_PROPAGATES = True  # Propagar excepciones cuando ALWAYS_EAGER es True
