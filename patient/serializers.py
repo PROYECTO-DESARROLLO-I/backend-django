@@ -109,6 +109,70 @@ class PatientListSerializer(serializers.ModelSerializer):
         if instance.eps:
             return {
                 "id": instance.eps.id,
-                "name": instance.eps.name  
+                "name": instance.eps.name
             }
         return None
+
+
+class PatientProfileSerializer(serializers.ModelSerializer):
+    """Read-only representation of the patient's own profile."""
+
+    full_name = serializers.SerializerMethodField()
+    email = serializers.EmailField(source="user.email", read_only=True)
+    eps = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Patient
+        fields = [
+            "full_name",
+            "identity_document",
+            "eps",
+            "email",
+            "phone_number",
+        ]
+        read_only_fields = ["full_name", "identity_document", "eps"]
+
+    def get_full_name(self, instance):
+        return f"{instance.user.nombre} {instance.user.apellido}".strip()
+
+    def get_eps(self, instance):
+        return instance.eps.name if instance.eps else None
+
+
+class PatientProfileUpdateSerializer(serializers.Serializer):
+    """Validates the fields the patient is allowed to edit on their own profile."""
+
+    FORBIDDEN_FIELDS = ("identity_document", "eps", "document_type")
+
+    email = serializers.EmailField(required=False)
+    phone_number = serializers.CharField(required=False)
+
+    def validate_phone_number(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("El teléfono solo debe contener dígitos.")
+        return value
+
+    def validate_email(self, value):
+        patient = self.context["patient"]
+        if User.objects.filter(email__iexact=value).exclude(pk=patient.user_id).exists():
+            raise serializers.ValidationError("Este correo ya está en uso.")
+        return value
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        if request is not None:
+            sent_forbidden = [
+                field for field in self.FORBIDDEN_FIELDS if field in request.data
+            ]
+            if sent_forbidden:
+                raise serializers.ValidationError(
+                    {
+                        field: "Este campo no se puede modificar."
+                        for field in sent_forbidden
+                    }
+                )
+        if not attrs:
+            raise serializers.ValidationError(
+                "Debe enviar al menos un campo para actualizar (email o phone_number)."
+            )
+        return attrs

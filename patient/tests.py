@@ -2,6 +2,9 @@ from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
 
 from eps.models import EPS
 from user.models import User
@@ -507,3 +510,113 @@ class PatientRegistrationSerializerTests(TestCase):
 
             patient = serializer.save()
             self.assertEqual(patient.document_type, doc_type)
+
+
+class PatientMeViewTests(APITestCase):
+    """Pruebas para el endpoint GET/PATCH /api/patients/me/"""
+
+    password = "ClaveSegura123*"
+
+    def setUp(self):
+        self.url = reverse("patient-me")
+        self.eps = EPS.objects.create(name="SURA", code="SURA001", active=True)
+
+        self.patient_user = User.objects.create_user(
+            email="paciente@test.com",
+            password=self.password,
+            nombre="Juan",
+            apellido="Garcia",
+            rol=User.Role.PATIENT,
+        )
+        self.patient = Patient.objects.create(
+            user=self.patient_user,
+            identity_document="12345678",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 5, 15),
+            phone_number="3015551234",
+            address="Calle 1 #2-3",
+            eps=self.eps,
+        )
+
+    def test_requires_authentication(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_non_patient_receives_403(self):
+        admin_user = User.objects.create_user(
+            email="admin@test.com",
+            password=self.password,
+            nombre="Admin",
+            apellido="Sistema",
+            rol=User.Role.ADMINISTRATIVE,
+        )
+        self.client.force_authenticate(user=admin_user)
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_get_returns_patient_profile(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["full_name"], "Juan Garcia")
+        self.assertEqual(response.data["identity_document"], "12345678")
+        self.assertEqual(response.data["eps"], "SURA")
+        self.assertEqual(response.data["email"], "paciente@test.com")
+        self.assertEqual(response.data["phone_number"], "3015551234")
+
+    def test_patch_updates_email_and_phone(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.patch(
+            self.url,
+            {"email": "nuevo@test.com", "phone_number": "3009998888"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["message"], "Perfil actualizado correctamente")
+
+        self.patient_user.refresh_from_db()
+        self.patient.refresh_from_db()
+        self.assertEqual(self.patient_user.email, "nuevo@test.com")
+        self.assertEqual(self.patient.phone_number, "3009998888")
+
+    def test_patch_duplicate_email_returns_400(self):
+        User.objects.create_user(
+            email="otro@test.com",
+            password=self.password,
+            nombre="Otro",
+            apellido="Usuario",
+            rol=User.Role.PATIENT,
+        )
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.patch(self.url, {"email": "otro@test.com"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_non_numeric_phone_returns_400(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.patch(
+            self.url, {"phone_number": "300-abc-1234"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_rejects_identity_document_and_eps_changes(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.patch(
+            self.url,
+            {"identity_document": "99999999", "eps": self.eps.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.patient.refresh_from_db()
+        self.assertEqual(self.patient.identity_document, "12345678")
