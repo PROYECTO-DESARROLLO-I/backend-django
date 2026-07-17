@@ -1,0 +1,13 @@
+.venv
+.git
+graphify-out
+**/__pycache__
+db.sqlite3
+celerybeat-schedule*
+*.pdf
+HU*.md
+docs/
+ApiTests/
+.env*
+Untitled
+staticfiles
