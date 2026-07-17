@@ -190,6 +190,34 @@
               "body": "{\n    \"id\": 1,\n    \"user\": {\n        \"id\": 2,\n        \"email\": \"paciente.prueba@gmail.com\",\n        \"nombre\": \"Andrés\",\n        \"apellido\": \"Mendoza\",\n        \"rol\": \"paciente\"\n    },\n    \"identity_document\": \"1098765432\",\n    \"document_type\": \"CC\",\n    \"date_birth\": \"1996-03-20\",\n    \"phone_number\": \"+573104567890\",\n    \"address\": \"Avenida Siempre Viva 123\",\n    \"sede\": { \"id\": 1, \"name\": \"Sede Central\" },\n    \"eps\": { \"id\": 1, \"name\": \"Sura\" }\n}"
             }
           ]
+        },
+        {
+          "name": "Desactivar paciente (admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/patients/1/deactivate/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "patients", "1", "deactivate", ""]
+            },
+            "description": "POST /api/patients/<id>/deactivate/ — Requiere rol `administrativo` o `superadmin` (`IsAdministrativeUser`).\n\nDesactiva la cuenta del paciente poniendo `User.is_active = false` (columna `activo`). Efectos:\n- El paciente no puede volver a iniciar sesión (el login responde 403 cuenta inactiva).\n- Sus tokens JWT emitidos dejan de ser válidos (401 en endpoints protegidos).\n- Desaparece de la búsqueda de pacientes (`PatientSearchView` filtra `user__is_active=True`).\n\nErrores: 400 si el paciente ya está desactivado, 404 si no existe, 403 si quien llama no es administrativo/superadmin.\n\nRespuesta 200: `{\"message\": \"Paciente desactivado correctamente\", \"data\": {paciente + is_active}}`."
+          },
+          "response": []
+        },
+        {
+          "name": "Reactivar paciente (admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/patients/1/activate/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "patients", "1", "activate", ""]
+            },
+            "description": "POST /api/patients/<id>/activate/ — Requiere rol `administrativo` o `superadmin` (`IsAdministrativeUser`).\n\nReactiva la cuenta del paciente (`User.is_active = true`). El paciente puede volver a iniciar sesión normalmente.\n\nErrores: 400 si el paciente ya está activo, 404 si no existe, 403 si quien llama no es administrativo/superadmin.\n\nRespuesta 200: `{\"message\": \"Paciente activado correctamente\", \"data\": {paciente + is_active}}`."
+          },
+          "response": []
         }
       ]
     },
@@ -408,6 +436,40 @@
               "path": ["api", "appointments", "1", "reschedule", ""]
             },
             "description": "POST /api/appointments/<id>/reschedule/ — HU17. Requiere rol `medico` (`IsDoctor`) y que la cita pertenezca al médico autenticado (si no, 403).\n\nBody: `scheduled_at` (nuevo horario, requerido), `reason` (motivo del cambio, opcional, se guarda en el historial).\n\nReglas de negocio:\n- Rechaza (400) si la cita ya está `cancelada` o `atendida`.\n- El nuevo `scheduled_at` se valida contra la disponibilidad del médico igual que al agendar (franja horaria válida, sin `ScheduleException`).\n- Verifica que el nuevo horario no choque con otra cita del médico ni con otra cita del paciente (excluyendo la propia cita que se reprograma).\n- Bloquea (`select_for_update`) tanto la fila del médico como la de la cita dentro de una transacción, para serializar reprogramaciones/creaciones concurrentes sobre el mismo médico.\n- Actualiza `scheduled_at`, `duration_minutes`, `headquarters` (según la nueva disponibilidad encontrada) y pone `status = reprogramada`.\n- Guarda un registro en `AppointmentHistory` (`previous_scheduled_at`, `new_scheduled_at`, `changed_by`, `reason`).\n- Envía notificación al paciente (`send_appointment_rescheduled`, tipo `Notification.Type.RESCHEDULED`).\n\nRespuesta 200: detalle de la cita actualizada (mismo formato que el detalle de cita)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Administrativos",
+      "description": "Gestión de cuentas de administrativos. Todas las rutas viven bajo /api/administratives/ y solo el `superadmin` puede usarlas (`IsSuperAdmin`).",
+      "item": [
+        {
+          "name": "Desactivar administrativo (superadmin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/administratives/1/deactivate/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "administratives", "1", "deactivate", ""]
+            },
+            "description": "POST /api/administratives/<id>/deactivate/ — Requiere rol `superadmin` (`IsSuperAdmin`).\n\nDesactiva la cuenta del administrativo (`User.is_active = false`). El administrativo no puede volver a iniciar sesión y sus tokens JWT dejan de ser válidos.\n\nProtecciones:\n- 400 si el superadmin intenta desactivar su propia cuenta (\"No puedes desactivar tu propia cuenta.\").\n- 400 si el objetivo es otro superadmin (\"No se puede desactivar a un superadministrador desde este endpoint.\").\n- 400 si ya está desactivado, 404 si no existe, 403 si quien llama no es superadmin.\n\nRespuesta 200: `{\"message\": \"Administrativo desactivado correctamente\", \"data\": {id, identity_document, position, user, is_active}}`."
+          },
+          "response": []
+        },
+        {
+          "name": "Reactivar administrativo (superadmin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}", "type": "text" }],
+            "url": {
+              "raw": "{{base_url}}/api/administratives/1/activate/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "administratives", "1", "activate", ""]
+            },
+            "description": "POST /api/administratives/<id>/activate/ — Requiere rol `superadmin` (`IsSuperAdmin`).\n\nReactiva la cuenta del administrativo (`User.is_active = true`).\n\nErrores: 400 si ya está activo, 404 si no existe, 403 si quien llama no es superadmin.\n\nRespuesta 200: `{\"message\": \"Administrativo activado correctamente\", \"data\": {id, identity_document, position, user, is_active}}`."
           },
           "response": []
         }
