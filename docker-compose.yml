@@ -12,7 +12,6 @@ services:
       - .env.production
     environment:
       ENVIRONMENT: production
-      ENV_FILE: .env.production
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
     depends_on:
@@ -20,31 +19,29 @@ services:
     restart: unless-stopped
 
   celery-worker:
-    build: .
     image: saludagendax-backend:latest
     command: celery -A config worker -l info
     env_file:
       - .env.production
     environment:
       ENVIRONMENT: production
-      ENV_FILE: .env.production
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
     depends_on:
       - redis
+      - web
     restart: unless-stopped
 
   celery-beat:
-    build: .
     image: saludagendax-backend:latest
     command: celery -A config beat -l info
     env_file:
       - .env.production
     environment:
       ENVIRONMENT: production
-      ENV_FILE: .env.production
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
     depends_on:
       - redis
+      - web
     restart: unless-stopped

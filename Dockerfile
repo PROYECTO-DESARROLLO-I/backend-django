@@ -14,7 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN ENVIRONMENT=production python manage.py collectstatic --noinput
+# ALLOWED_HOSTS y SECRET_KEY solo se usan aqui para satisfacer los guards de
+# config/settings/production.py durante el build; collectstatic no necesita
+# valores reales (no toca DB ni ALLOWED_HOSTS). En runtime se sobreescriben
+# con los valores reales inyectados via env_file (.env.production).
+RUN ENVIRONMENT=production ALLOWED_HOSTS=build-placeholder SECRET_KEY=build-time-placeholder-not-used-at-runtime \
+    python manage.py collectstatic --noinput
 
 RUN useradd --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /app
