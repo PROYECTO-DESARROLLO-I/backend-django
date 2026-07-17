@@ -1,17 +1,27 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from appointment.models import Appointment, AppointmentHistory
+from doctor.models import Doctor
 from eps.models import EPS
+from headquarters.models import Headquarters
+from specialties.models import Specialty
 from user.models import User
 
 from .models import Patient
 from .serializers import PatientRegistrationSerializer
+
+
+def _make_aware(d, t):
+    return timezone.make_aware(datetime.combine(d, t))
 
 User = get_user_model()
 
@@ -751,3 +761,170 @@ class PatientStatusViewTests(APITestCase):
         me_response = anonymous_client.get(reverse("patient-me"))
 
         self.assertEqual(me_response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class PatientDeactivateCancelsAppointmentsTests(APITestCase):
+    """Pruebas de cancelación automática de citas futuras al desactivar un paciente."""
+
+    password = "ClaveSegura123*"
+
+    def setUp(self):
+        self.eps = EPS.objects.create(name="SURA", code="SURA001", active=True)
+
+        self.patient_user = User.objects.create_user(
+            email="paciente@test.com",
+            password=self.password,
+            nombre="Juan",
+            apellido="Garcia",
+            rol=User.Role.PATIENT,
+        )
+        self.patient = Patient.objects.create(
+            user=self.patient_user,
+            identity_document="12345678",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 5, 15),
+            phone_number="3015551234",
+            address="Calle 1 #2-3",
+            eps=self.eps,
+        )
+
+        self.admin_user = User.objects.create_user(
+            email="admin@test.com",
+            password=self.password,
+            nombre="Admin",
+            apellido="Sistema",
+            rol=User.Role.ADMINISTRATIVE,
+        )
+
+        doctor_user = User.objects.create_user(
+            email="medico@test.com",
+            password=self.password,
+            nombre="Carlos",
+            apellido="Perez",
+            rol=User.Role.DOCTOR,
+        )
+        self.specialty = Specialty.objects.create(name="Medicina General", active=True)
+        self.headquarters = Headquarters.objects.create(name="Sede Central", active=True)
+        self.doctor = Doctor.objects.create(
+            user=doctor_user,
+            identity_document="987654321",
+            active=True,
+        )
+
+        self.future_date = date.today() + timedelta(days=2)
+        self.past_date = date.today() - timedelta(days=2)
+
+        self.deactivate_url = reverse("patient-deactivate", args=[self.patient.pk])
+        self.activate_url = reverse("patient-activate", args=[self.patient.pk])
+
+    def _create_appointment(self, scheduled_at, appointment_status):
+        return Appointment.objects.create(
+            patient=self.patient,
+            doctor=self.doctor,
+            specialty=self.specialty,
+            headquarters=self.headquarters,
+            scheduled_at=scheduled_at,
+            duration_minutes=30,
+            status=appointment_status,
+            created_by=self.patient_user,
+        )
+
+    @patch("patient.views.send_appointment_cancelled")
+    def test_deactivate_cancels_future_pending_and_confirmed_appointments(self, mock_notify):
+        pending = self._create_appointment(
+            _make_aware(self.future_date, time(9, 0)), Appointment.Status.PENDING
+        )
+        confirmed = self._create_appointment(
+            _make_aware(self.future_date, time(10, 0)), Appointment.Status.CONFIRMED
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        pending.refresh_from_db()
+        confirmed.refresh_from_db()
+        self.assertEqual(pending.status, Appointment.Status.CANCELLED)
+        self.assertEqual(confirmed.status, Appointment.Status.CANCELLED)
+
+        self.assertEqual(
+            AppointmentHistory.objects.filter(appointment__in=[pending, confirmed]).count(), 2
+        )
+        for history in AppointmentHistory.objects.filter(appointment__in=[pending, confirmed]):
+            self.assertEqual(history.changed_by, self.admin_user)
+            self.assertIn("desactivación", history.reason)
+
+        self.assertEqual(response.data["data"]["cancelled_appointments"]["count"], 2)
+        self.assertCountEqual(
+            response.data["data"]["cancelled_appointments"]["ids"],
+            [pending.id, confirmed.id],
+        )
+        self.assertEqual(mock_notify.call_count, 2)
+
+    @patch("patient.views.send_appointment_cancelled")
+    def test_deactivate_cancels_future_rescheduled_appointments(self, mock_notify):
+        rescheduled = self._create_appointment(
+            _make_aware(self.future_date, time(14, 0)), Appointment.Status.RESCHEDULED
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        rescheduled.refresh_from_db()
+        self.assertEqual(rescheduled.status, Appointment.Status.CANCELLED)
+        self.assertEqual(response.data["data"]["cancelled_appointments"]["count"], 1)
+        self.assertEqual(
+            response.data["data"]["cancelled_appointments"]["ids"], [rescheduled.id]
+        )
+        self.assertEqual(mock_notify.call_count, 1)
+
+    @patch("patient.views.send_appointment_cancelled")
+    def test_deactivate_does_not_touch_past_attended_or_already_cancelled_appointments(
+        self, mock_notify
+    ):
+        past_confirmed = self._create_appointment(
+            _make_aware(self.past_date, time(9, 0)), Appointment.Status.CONFIRMED
+        )
+        attended = self._create_appointment(
+            _make_aware(self.future_date, time(11, 0)), Appointment.Status.ATTENDED
+        )
+        already_cancelled = self._create_appointment(
+            _make_aware(self.future_date, time(12, 0)), Appointment.Status.CANCELLED
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        past_confirmed.refresh_from_db()
+        attended.refresh_from_db()
+        already_cancelled.refresh_from_db()
+
+        self.assertEqual(past_confirmed.status, Appointment.Status.CONFIRMED)
+        self.assertEqual(attended.status, Appointment.Status.ATTENDED)
+        self.assertEqual(already_cancelled.status, Appointment.Status.CANCELLED)
+
+        self.assertEqual(response.data["data"]["cancelled_appointments"]["count"], 0)
+        mock_notify.assert_not_called()
+
+    @patch("patient.views.send_appointment_cancelled")
+    def test_reactivate_does_not_revive_cancelled_appointments(self, mock_notify):
+        pending = self._create_appointment(
+            _make_aware(self.future_date, time(9, 0)), Appointment.Status.PENDING
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        self.client.post(self.deactivate_url)
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, Appointment.Status.CANCELLED)
+
+        response = self.client.post(self.activate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, Appointment.Status.CANCELLED)
+        self.assertEqual(response.data["data"]["cancelled_appointments"]["count"], 0)
