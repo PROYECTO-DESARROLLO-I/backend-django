@@ -4,7 +4,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from eps.models import EPS
 from user.models import User
@@ -620,3 +621,133 @@ class PatientMeViewTests(APITestCase):
 
         self.patient.refresh_from_db()
         self.assertEqual(self.patient.identity_document, "12345678")
+
+
+class PatientStatusViewTests(APITestCase):
+    """Pruebas para los endpoints POST /api/patients/<id>/deactivate/ y /activate/"""
+
+    password = "ClaveSegura123*"
+
+    def setUp(self):
+        self.eps = EPS.objects.create(name="SURA", code="SURA001", active=True)
+
+        self.patient_user = User.objects.create_user(
+            email="paciente@test.com",
+            password=self.password,
+            nombre="Juan",
+            apellido="Garcia",
+            rol=User.Role.PATIENT,
+        )
+        self.patient = Patient.objects.create(
+            user=self.patient_user,
+            identity_document="12345678",
+            document_type=Patient.DocumentType.CC,
+            date_birth=date(1990, 5, 15),
+            phone_number="3015551234",
+            address="Calle 1 #2-3",
+            eps=self.eps,
+        )
+
+        self.admin_user = User.objects.create_user(
+            email="admin@test.com",
+            password=self.password,
+            nombre="Admin",
+            apellido="Sistema",
+            rol=User.Role.ADMINISTRATIVE,
+        )
+
+        self.deactivate_url = reverse("patient-deactivate", args=[self.patient.pk])
+        self.activate_url = reverse("patient-activate", args=[self.patient.pk])
+
+    def test_admin_can_deactivate_patient(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.patient_user.refresh_from_db()
+        self.assertFalse(self.patient_user.is_active)
+
+    def test_admin_can_reactivate_patient(self):
+        self.patient_user.is_active = False
+        self.patient_user.save(update_fields=["is_active"])
+        self.client.force_authenticate(user=self.admin_user)
+
+        response = self.client.post(self.activate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.patient_user.refresh_from_db()
+        self.assertTrue(self.patient_user.is_active)
+
+    def test_patient_receives_403(self):
+        self.client.force_authenticate(user=self.patient_user)
+
+        response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_doctor_receives_403(self):
+        doctor_user = User.objects.create_user(
+            email="doctor@test.com",
+            password=self.password,
+            nombre="Doc",
+            apellido="Tor",
+            rol=User.Role.DOCTOR,
+        )
+        self.client.force_authenticate(user=doctor_user)
+
+        response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_unauthenticated_user_receives_401(self):
+        response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_nonexistent_patient_receives_404(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        url = reverse("patient-deactivate", args=[999999])
+        response = self.client.post(url)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_deactivate_twice_receives_400(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        first_response = self.client.post(self.deactivate_url)
+        second_response = self.client.post(self.deactivate_url)
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_deactivated_patient_cannot_login(self):
+        self.client.force_authenticate(user=self.admin_user)
+        self.client.post(self.deactivate_url)
+        self.client.force_authenticate(user=None)
+
+        login_url = reverse("auth-login")
+        response = self.client.post(
+            login_url,
+            {"email": "paciente@test.com", "password": self.password},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_deactivated_patient_jwt_token_rejected_on_protected_endpoint(self):
+        # Emite un access token real (sin force_authenticate) mientras el paciente está activo.
+        refresh = RefreshToken.for_user(self.patient_user)
+        access_token = str(refresh.access_token)
+
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(self.deactivate_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        anonymous_client = APIClient()
+        anonymous_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+
+        me_response = anonymous_client.get(reverse("patient-me"))
+
+        self.assertEqual(me_response.status_code, status.HTTP_401_UNAUTHORIZED)
