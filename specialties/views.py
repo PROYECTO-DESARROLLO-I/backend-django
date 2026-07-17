@@ -49,11 +49,19 @@ class SpecialtyAdminListCreateView(APIView):
     """
     GET  /api/dashboard/specialties/        → lista todas (incluyendo inactivas)
     POST /api/dashboard/specialties/        → crear nueva especialidad
+
+    El listado lo usa también el filtro de reportes del rol administrativo,
+    por eso el GET acepta administrativo y superadmin; la gestión (POST)
+    sigue siendo exclusiva del superadmin.
     """
-    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsAuthenticated(), IsAdministrativeUser()]
+        return [IsAuthenticated(), IsSuperAdmin()]
 
     def get(self, request):
-        #self._check_superadmin(request.user)
         specialties = Specialty.objects.all().order_by('name')
         serializer = SpecialtyAdminSerializer(specialties, many=True)
         return Response(serializer.data)
